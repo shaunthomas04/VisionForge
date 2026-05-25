@@ -113,7 +113,20 @@ def validate_annotation(
                 "confidence": 0,
                 "rejection_reason": "bbox covers entire image (likely false positive)",
             }
-        crop = img.crop((max(0, x), max(0, y), min(width, x + w), min(height, y + h)))
+        left = max(0, x)
+        top = max(0, y)
+        right = min(width, x + w)
+        bottom = min(height, y + h)
+        if right <= left or bottom <= top:
+            return {
+                "status": "rejected",
+                "annotation_id": annotation_id,
+                "job_id": job_id,
+                "passed": False,
+                "confidence": 0,
+                "rejection_reason": "bbox has zero or negative dimensions after clamping",
+            }
+        crop = img.crop((left, top, right, bottom))
     else:
         crop = img
 
@@ -147,7 +160,7 @@ def validate_annotation(
     confirmed = result.get("confirmed", False)
     passed = confirmed and confidence >= confidence_threshold
 
-    return {
+    out = {
         "status": "validated" if passed else "rejected",
         "annotation_id": annotation_id,
         "job_id": job_id,
@@ -156,3 +169,12 @@ def validate_annotation(
         "confidence": confidence,
         "rejection_reason": None if passed else (result.get("reason") or f"confidence {confidence:.2f} below threshold {confidence_threshold}"),
     }
+    if passed:
+        out.update({
+            "gcs_uri": gcs_uri,
+            "class_name": class_name,
+            "bbox": bbox,
+            "width": width,
+            "height": height,
+        })
+    return out
