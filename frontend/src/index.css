@@ -1,28 +1,102 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  * {
-    @apply border-border;
-  }
+  * { box-sizing: border-box; }
   body {
     @apply bg-bg text-fg font-sans antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -10%, rgba(99,102,241,0.13) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 35% at 85% 85%, rgba(34,197,94,0.10) 0%, transparent 55%),
+      radial-gradient(ellipse 40% 25% at 10% 70%, rgba(34,197,94,0.07) 0%, transparent 50%);
+    background-attachment: fixed;
   }
-  ::-webkit-scrollbar {
-    width: 6px;
-  }
-  ::-webkit-scrollbar-track {
-    @apply bg-surface;
-  }
-  ::-webkit-scrollbar-thumb {
-    @apply bg-muted rounded-full;
-  }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-muted rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-muted-fg; }
+
+  ::selection { background: rgba(99,102,241,0.3); color: #fff; }
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
+/* ── Background orbs ──────────────────────────────────────────────── */
+.orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(80px);
+  will-change: transform;
+}
+.orb-1 {
+  width: 600px; height: 600px;
+  top: -200px; left: -150px;
+  background: radial-gradient(circle, rgba(99,102,241,0.18) 0%, transparent 70%);
+  animation: orbFloat1 22s ease-in-out infinite;
+}
+.orb-2 {
+  width: 550px; height: 550px;
+  bottom: -180px; right: -120px;
+  background: radial-gradient(circle, rgba(34,197,94,0.2) 0%, transparent 70%);
+  animation: orbFloat2 28s ease-in-out infinite;
+}
+.orb-3 {
+  width: 380px; height: 380px;
+  top: 40%; left: 55%;
+  background: radial-gradient(circle, rgba(139,92,246,0.12) 0%, transparent 70%);
+  animation: orbFloat3 18s ease-in-out infinite;
+}
+.orb-4 {
+  width: 320px; height: 320px;
+  top: 55%; left: -80px;
+  background: radial-gradient(circle, rgba(34,197,94,0.11) 0%, transparent 70%);
+  animation: orbFloat1 34s ease-in-out infinite reverse;
+}
+
+@keyframes orbFloat1 {
+  0%,100% { transform: translate(0px,  0px)  scale(1);   }
+  33%      { transform: translate(60px, 80px) scale(1.08); }
+  66%      { transform: translate(-40px,50px) scale(0.95); }
+}
+@keyframes orbFloat2 {
+  0%,100% { transform: translate(0px,   0px)   scale(1);    }
+  40%      { transform: translate(-70px,-60px)  scale(1.1);  }
+  70%      { transform: translate(50px, -30px)  scale(0.92); }
+}
+@keyframes orbFloat3 {
+  0%,100% { transform: translate(0px,   0px)  scale(1);   }
+  50%      { transform: translate(-50px, 60px) scale(1.06); }
+}
+
+@layer components {
+  .glass {
+    @apply bg-surface border border-border rounded-2xl;
+    backdrop-filter: blur(16px);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
   }
+  .glass-sm {
+    @apply bg-surface-2 border border-border rounded-xl;
+    backdrop-filter: blur(8px);
+  }
+  .btn-primary {
+    @apply bg-primary hover:bg-primary-hover text-white font-semibold rounded-xl px-5 py-2.5
+           transition-all duration-200 cursor-pointer flex items-center gap-2
+           focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-40 disabled:cursor-not-allowed;
+    box-shadow: 0 0 20px rgba(99,102,241,0.25);
+  }
+  .btn-primary:hover:not(:disabled) {
+    box-shadow: 0 0 30px rgba(99,102,241,0.4);
+    transform: translateY(-1px);
+  }
+  .btn-ghost {
+    @apply text-muted-fg hover:text-fg hover:bg-surface-2 rounded-lg px-3 py-1.5
+           transition-all duration-150 cursor-pointer text-sm font-medium;
+  }
+  .dot-typing span {
+    @apply inline-block w-1.5 h-1.5 rounded-full bg-accent mx-0.5;
+    animation: dots 1.4s infinite;
+  }
+  .dot-typing span:nth-child(2) { animation-delay: 0.2s; }
+  .dot-typing span:nth-child(3) { animation-delay: 0.4s; }
 }

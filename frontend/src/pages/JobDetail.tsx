@@ -3,12 +3,12 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { streamRun, type AgentEvent } from '../lib/api'
 import PipelineStatus, { type PipelineStep } from '../components/PipelineStatus'
 import ExportPanel from '../components/ExportPanel'
-import { Bot, User } from 'lucide-react'
+import { Bot } from 'lucide-react'
 
 interface Message {
-  role: 'user' | 'agent' | 'tool'
+  role: 'user' | 'agent' | 'progress'
   text: string
-  toolName?: string
+  detail?: string
 }
 
 interface ExportData {
@@ -18,90 +18,144 @@ interface ExportData {
 }
 
 const PIPELINE_STEPS: PipelineStep[] = [
-  { id: 'search', label: 'Image Collection', status: 'pending' },
-  { id: 'annotate', label: 'Gemini Annotation', status: 'pending' },
-  { id: 'validate', label: 'Validation', status: 'pending' },
-  { id: 'deduplicate', label: 'Deduplication', status: 'pending' },
-  { id: 'export', label: 'Export (YOLO / COCO)', status: 'pending' },
+  { id: 'search',      label: 'Image Collection',    status: 'pending' },
+  { id: 'annotate',    label: 'Gemini Annotation',   status: 'pending' },
+  { id: 'validate',    label: 'Validation',          status: 'pending' },
+  { id: 'deduplicate', label: 'Deduplication',       status: 'pending' },
+  { id: 'export',      label: 'Export (YOLO / COCO)',status: 'pending' },
 ]
 
 const TOOL_STEP_MAP: Record<string, number> = {
-  search_images: 0,
-  annotate_image: 1,
-  validate_annotation: 2,
-  deduplicate: 3,
-  export_dataset: 4,
+  search_images: 0, annotate_image: 1,
+  validate_annotation: 2, deduplicate: 3, export_dataset: 4,
 }
 
 export default function JobDetail() {
-  const { jobId } = useParams<{ jobId: string }>()
-  const [searchParams] = useSearchParams()
-  const prompt = searchParams.get('q') ?? ''
+  const { jobId }         = useParams<{ jobId: string }>()
+  const [searchParams]    = useSearchParams()
+  const prompt            = searchParams.get('q') ?? ''
 
-  const [messages, setMessages] = useState<Message[]>([
-    { role: 'user', text: prompt },
-  ])
-  const [steps, setSteps] = useState<PipelineStep[]>(PIPELINE_STEPS.map(s => ({ ...s })))
+  const [messages, setMessages] = useState<Message[]>([{ role: 'user', text: prompt }])
+  const [steps, setSteps]       = useState<PipelineStep[]>(PIPELINE_STEPS.map(s => ({ ...s })))
   const [exportData, setExportData] = useState<ExportData | null>(null)
-  const [done, setDone] = useState(false)
+  const [done, setDone]   = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const logRef = useRef<HTMLDivElement>(null)
-  const activeStep = useRef<number>(-1)
-  const started = useRef(false)
+  const logRef            = useRef<HTMLDivElement>(null)
+
+  const activeStep    = useRef(-1)
+  const started       = useRef(false)
+  const totalImages   = useRef(0)
+  const annotateIdx   = useRef(0)
+  const validateIdx   = useRef(0)
+  const validatePassed= useRef(0)
+
+  const addAgent    = (text: string, detail?: string) =>
+    setMessages(p => [...p, { role: 'agent', text, detail }])
+  const addProgress = (text: string, detail?: string) =>
+    setMessages(p => [...p, { role: 'progress', text, detail }])
 
   function markStep(idx: number, status: PipelineStep['status'], detail?: string) {
-    setSteps(prev => prev.map((s, i) => i === idx ? { ...s, status, detail } : s))
+    setSteps(p => p.map((s, i) => i === idx ? { ...s, status, detail } : s))
   }
 
   function handleEvent(event: AgentEvent) {
-    const parts = event.content?.parts ?? []
+    for (const part of event.content?.parts ?? []) {
 
-    for (const part of parts) {
       if (part.function_call) {
-        const stepIdx = TOOL_STEP_MAP[part.function_call.name]
-        if (stepIdx !== undefined) {
-          // Mark previous step done
-          if (activeStep.current >= 0 && activeStep.current !== stepIdx) {
-            markStep(activeStep.current, 'done')
-          }
-          activeStep.current = stepIdx
-          markStep(stepIdx, 'running')
+        const { name, args = {} } = part.function_call
+        const idx = TOOL_STEP_MAP[name]
+        if (idx !== undefined) {
+          if (activeStep.current >= 0 && activeStep.current !== idx) markStep(activeStep.current, 'done')
+          activeStep.current = idx
+          markStep(idx, 'running')
         }
-        setMessages(prev => [...prev, {
-          role: 'tool',
-          text: `Calling ${part.function_call!.name}…`,
-          toolName: part.function_call!.name,
-        }])
+        if (name === 'search_images') {
+          addAgent(`Searching Unsplash for "${args.query ?? 'images'}" — targeting ${args.count ?? '?'} images…`)
+        } else if (name === 'annotate_image') {
+          annotateIdx.current++
+          addProgress(`Annotating image ${annotateIdx.current} of ${totalImages.current || '?'}…`)
+        } else if (name === 'validate_annotation') {
+          validateIdx.current++
+          addProgress(`Validating annotation ${validateIdx.current}…`)
+        } else if (name === 'deduplicate') {
+          addAgent(`Scanning ${totalImages.current} images for near-duplicates using perceptual hashing…`)
+        } else if (name === 'export_dataset') {
+          addAgent('Generating YOLO and COCO archives…')
+        }
       }
 
       if (part.function_response) {
-        const name = part.function_response.name
-        const resp = part.function_response.response as Record<string, unknown>
-        const stepIdx = TOOL_STEP_MAP[name]
+        const { name, response: resp } = part.function_response
+        const r = resp as Record<string, unknown>
+        const idx = TOOL_STEP_MAP[name]
+        const isErr = r.status === 'error'
 
-        if (name === 'export_dataset' && resp.status === 'ok') {
-          setExportData({
-            exports: resp.exports as Record<string, string>,
-            image_count: resp.image_count as number,
-            splits: resp.splits as { train: number; val: number; test: number },
-          })
-          if (stepIdx !== undefined) markStep(stepIdx, 'done')
-          activeStep.current = -1
-        }
-
-        const detail = resp.message as string | undefined
-          ?? (resp.collected != null ? `${resp.collected} images collected` : undefined)
-          ?? (resp.kept != null ? `${resp.kept} kept, ${resp.removed} removed` : undefined)
-
-        if (stepIdx !== undefined && resp.status !== 'error') {
-          markStep(stepIdx, 'done', detail)
-        } else if (stepIdx !== undefined && resp.status === 'error') {
-          markStep(stepIdx, 'error', detail)
+        if (name === 'search_images') {
+          if (isErr) { addAgent(`Search failed: ${r.message}`); markStep(idx, 'error') }
+          else {
+            totalImages.current = r.collected as number
+            addAgent(
+              `Found ${r.collected} images and uploaded them to GCS.`,
+              'Starting Gemini Vision annotation on each one…'
+            )
+            markStep(idx, 'done', `${r.collected} collected`)
+          }
+        } else if (name === 'annotate_image') {
+          const anns = (r.annotations as Array<Record<string, unknown>>) ?? []
+          if (anns.length > 0) {
+            const labels = anns.map(a => `${a.class_name} · ${Math.round((a.confidence as number) * 100)}%`).join('  ·  ')
+            addProgress(`→ ${labels}`, 'confirmed')
+          } else {
+            addProgress('→ No object detected, skipping')
+          }
+          if (annotateIdx.current >= totalImages.current && totalImages.current > 0) {
+            addAgent(`All ${totalImages.current} images annotated. Running validation pass…`)
+            markStep(idx, 'done', `${totalImages.current} annotated`)
+          }
+        } else if (name === 'validate_annotation') {
+          const passed = r.passed as boolean
+          if (passed) {
+            validatePassed.current++
+            addProgress(`→ Confirmed  ${Math.round((r.confidence as number) * 100)}% confidence`, 'passed')
+          } else {
+            addProgress(`→ Rejected: ${r.rejection_reason ?? 'low confidence'}`, 'rejected')
+          }
+          if (validateIdx.current >= annotateIdx.current && annotateIdx.current > 0) {
+            addAgent(
+              `Validation complete — ${validatePassed.current} of ${validateIdx.current} annotations passed.`
+            )
+            markStep(idx, 'done', `${validatePassed.current} passed`)
+          }
+        } else if (name === 'deduplicate') {
+          if (isErr) { addAgent(`Deduplication failed: ${r.message}`); markStep(idx, 'error') }
+          else {
+            const kept = r.kept as number, removed = r.removed as number
+            addAgent(
+              removed > 0
+                ? `Removed ${removed} near-duplicate${removed > 1 ? 's' : ''}. ${kept} unique images remain.`
+                : `No duplicates found — all ${kept} images are unique.`
+            )
+            markStep(idx, 'done', `${kept} kept`)
+          }
+        } else if (name === 'export_dataset') {
+          if (isErr) { addAgent(`Export failed: ${r.message}`); markStep(idx, 'error') }
+          else {
+            const count = r.image_count as number
+            const splits = r.splits as { train: number; val: number; test: number }
+            setExportData({ exports: r.exports as Record<string, string>, image_count: count, splits })
+            addAgent(
+              `Dataset ready! ${count} images exported in YOLO and COCO format.`,
+              splits ? `Split: ${splits.train} train / ${splits.val} val / ${splits.test} test` : undefined
+            )
+            markStep(idx, 'done', `${count} images`)
+            activeStep.current = -1
+          }
         }
       }
 
       if (part.text && event.author !== 'user') {
-        setMessages(prev => [...prev, { role: 'agent', text: part.text! }])
+        const t = (part.text as string).trim()
+        if (t) addAgent(t)
       }
     }
   }
@@ -109,21 +163,12 @@ export default function JobDetail() {
   useEffect(() => {
     if (!jobId || !prompt || started.current) return
     started.current = true
-
     const stop = streamRun(
-      decodeURIComponent(jobId),
-      prompt,
+      decodeURIComponent(jobId), prompt,
       handleEvent,
-      () => {
-        setDone(true)
-        if (activeStep.current >= 0) {
-          markStep(activeStep.current, 'done')
-          activeStep.current = -1
-        }
-      },
-      (err) => setError(err.message),
+      () => { setDone(true); if (activeStep.current >= 0) { markStep(activeStep.current, 'done'); activeStep.current = -1 } },
+      err => setError(err.message),
     )
-
     return stop
   }, [jobId, prompt])
 
@@ -132,71 +177,82 @@ export default function JobDetail() {
   }, [messages])
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5" style={{ height: 'calc(100vh - 5.5rem)' }}>
 
-        {/* Left: Pipeline status */}
-        <div className="lg:col-span-1 space-y-4">
-          <div className="rounded-xl border border-border bg-surface p-5">
-            <h2 className="text-sm font-semibold text-fg mb-5">Pipeline</h2>
+        {/* Left — Pipeline */}
+        <div className="lg:col-span-1 flex flex-col gap-4 overflow-y-auto">
+          <div className="glass p-5">
+            <p className="text-xs font-bold text-muted-fg uppercase tracking-widest mb-5">Pipeline</p>
             <PipelineStatus steps={steps} />
           </div>
-
           {exportData && (
-            <ExportPanel
-              exports={exportData.exports}
-              imageCount={exportData.image_count}
-              splits={exportData.splits}
-            />
+            <ExportPanel exports={exportData.exports} imageCount={exportData.image_count} splits={exportData.splits} />
           )}
         </div>
 
-        {/* Right: Agent log */}
-        <div className="lg:col-span-2 rounded-xl border border-border bg-surface flex flex-col" style={{ height: 'calc(100vh - 9rem)' }}>
-          <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-fg">Agent Log</h2>
+        {/* Right — Chat */}
+        <div className="lg:col-span-2 glass flex flex-col overflow-hidden">
+          {/* Chat header */}
+          <div className="px-5 py-4 border-b border-border flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-accent-dim border border-accent/20 flex items-center justify-center">
+              <Bot className="w-4 h-4 text-accent" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-fg">VisionForge Agent</p>
+              <p className="text-xs text-muted-fg">Gemini Vision · Google Cloud</p>
+            </div>
             {!done && !error && (
-              <span className="flex items-center gap-1.5 text-xs text-accent">
-                <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-slow" />
-                Running
-              </span>
+              <div className="dot-typing"><span /><span /><span /></div>
             )}
-            {done && <span className="text-xs text-muted-fg">Complete</span>}
-            {error && <span className="text-xs text-danger">Error</span>}
+            {done  && <span className="text-xs font-medium text-accent">Complete</span>}
+            {error && <span className="text-xs font-medium text-danger">Error</span>}
           </div>
 
-          <div ref={logRef} className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Messages */}
+          <div ref={logRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
             {messages.map((msg, i) => (
               <div key={i} className="animate-fade-in">
+
+                {/* User — right-aligned bubble */}
                 {msg.role === 'user' && (
-                  <div className="flex gap-3">
-                    <div className="w-6 h-6 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <User className="w-3 h-3 text-primary" />
+                  <div className="flex justify-end">
+                    <div className="max-w-[80%] bg-primary rounded-2xl rounded-tr-sm px-4 py-3 shadow-glow-sm">
+                      <p className="text-sm text-white leading-relaxed">{msg.text}</p>
                     </div>
-                    <p className="text-sm text-fg pt-0.5">{msg.text}</p>
                   </div>
                 )}
+
+                {/* Agent — left-aligned with avatar */}
                 {msg.role === 'agent' && (
-                  <div className="flex gap-3">
-                    <div className="w-6 h-6 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <Bot className="w-3 h-3 text-accent" />
+                  <div className="flex items-start gap-3">
+                    <div className="w-7 h-7 rounded-xl bg-accent-dim border border-accent/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Bot className="w-3.5 h-3.5 text-accent" />
                     </div>
-                    <p className="text-sm text-fg-secondary pt-0.5 whitespace-pre-wrap">{msg.text}</p>
+                    <div className="glass-sm px-4 py-3 max-w-[82%]">
+                      <p className="text-sm text-fg leading-relaxed">{msg.text}</p>
+                      {msg.detail && (
+                        <p className="text-xs text-muted-fg mt-1">{msg.detail}</p>
+                      )}
+                    </div>
                   </div>
                 )}
-                {msg.role === 'tool' && (
-                  <div className="ml-9">
-                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-fg bg-border/50 px-2.5 py-1 rounded-full">
-                      <span className="w-1 h-1 rounded-full bg-muted-fg" />
-                      {msg.text}
-                    </span>
+
+                {/* Progress — indented, compact */}
+                {msg.role === 'progress' && (
+                  <div className="ml-10 flex items-start gap-2 pl-2 border-l border-border">
+                    <span className={`text-xs mt-0.5 flex-shrink-0 ${
+                      msg.detail === 'confirmed' || msg.detail === 'passed' ? 'text-accent' :
+                      msg.detail === 'rejected' ? 'text-danger' : 'text-muted-fg'
+                    }`}>›</span>
+                    <p className="text-xs text-muted-fg leading-relaxed">{msg.text}</p>
                   </div>
                 )}
               </div>
             ))}
 
             {error && (
-              <div className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+              <div className="rounded-xl border border-danger/25 bg-danger-dim px-4 py-3 text-sm text-danger">
                 {error}
               </div>
             )}
