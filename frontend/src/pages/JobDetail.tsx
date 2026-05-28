@@ -1,288 +1,37 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { streamRun, type AgentEvent } from '../lib/api'
-import PipelineStatus, { type PipelineStep } from '../components/PipelineStatus'
+import { useJob } from '../contexts/JobContext'
+import PipelineStatus from '../components/PipelineStatus'
 import ExportPanel from '../components/ExportPanel'
 import { Bot, Download } from 'lucide-react'
 
-interface Message {
-  role: 'user' | 'agent' | 'progress'
-  text: string
-  detail?: string
-  variant?: 'pass' | 'fail' | 'neutral'
-}
-
-interface LiveProgress {
-  label: string
-  current: number
-  total: number
-}
-
-interface ExportData {
-  job_id: string
-  exports: Record<string, string>
-  image_count: number
-  splits?: { train: number; val: number; test: number }
-}
-
-const INIT_STEPS: PipelineStep[] = [
-  { id: 'search',      label: 'Image Collection',     status: 'pending' },
-  { id: 'annotate',    label: 'Gemini Annotation',    status: 'pending' },
-  { id: 'validate',    label: 'Validation',           status: 'pending' },
-  { id: 'deduplicate', label: 'Deduplication',        status: 'pending' },
-  { id: 'export',      label: 'Export (YOLO / COCO)', status: 'pending' },
-]
-
-const TOOL_STEP: Record<string, number> = {
-  search_images: 0, annotate_image: 1,
-  validate_annotation: 2, deduplicate: 3, export_dataset: 4,
-}
-
 export default function JobDetail() {
-  const { jobId }   = useParams<{ jobId: string }>()
-  const [sp]        = useSearchParams()
-  const prompt      = sp.get('q') ?? ''
+  const { jobId }         = useParams<{ jobId: string }>()
+  const [sp]              = useSearchParams()
+  const { job, startJob } = useJob()
+  const logRef            = useRef<HTMLDivElement>(null)
 
-  const [messages, setMessages]     = useState<Message[]>([{ role: 'user', text: prompt }])
-  const [steps, setSteps]           = useState<PipelineStep[]>(INIT_STEPS.map(s => ({ ...s })))
-  const [live, setLive]             = useState<LiveProgress | null>(null)
-  const [exportData, setExportData] = useState<ExportData | null>(null)
-  const [done, setDone]             = useState(false)
-  const [error, setError]           = useState<string | null>(null)
-  const logRef                      = useRef<HTMLDivElement>(null)
+  const decodedId = jobId ? decodeURIComponent(jobId) : ''
+  const prompt    = sp.get('q')     ?? ''
+  const query     = sp.get('label') ?? ''
 
-  // mutable counters — no renders
-  const started        = useRef(false)
-  const totalImages    = useRef(0)
-  const annotateIdx    = useRef(0)
-  const validateIdx    = useRef(0)
-  const validatePassed = useRef(0)
-  const pendingText    = useRef('')
-
-  // schedule queue: spreads rapid batched events 100ms apart visually
-  const nextUpdateAt = useRef(0)
-
-  function scheduleUpdate(fn: () => void) {
-    const now  = Date.now()
-    const when = Math.max(now + 10, nextUpdateAt.current)
-    nextUpdateAt.current = when + 100
-    setTimeout(fn, when - now)
-  }
-
-  const pushMsg  = (text: string, detail?: string, variant?: Message['variant']) =>
-    setMessages(p => [...p, { role: 'agent', text, detail, variant }])
-  const pushProg = (text: string, variant?: Message['variant']) =>
-    setMessages(p => [...p, { role: 'progress', text, variant }])
-
-  function flushPendingText() {
-    const t = pendingText.current.trim()
-    if (t) {
-      scheduleUpdate(() => pushMsg(t))
-      pendingText.current = ''
-    }
-  }
-
-  function markStep(idx: number, status: PipelineStep['status'], detail?: string) {
-    setSteps(p => p.map((s, i) => i === idx ? { ...s, status, detail } : s))
-  }
-
-  function transitionTo(idx: number) {
-    setSteps(p => p.map((s, i) => {
-      if (i < idx && (s.status === 'running' || s.status === 'pending')) return { ...s, status: 'done' }
-      if (i === idx) return { ...s, status: 'running' }
-      return s
-    }))
-  }
-
-  function handleEvent(ev: AgentEvent) {
-    // flush accumulated text on turn_complete
-    const tc = (ev as Record<string, unknown>)
-    if (tc.turn_complete || (tc.actions as Record<string, unknown>)?.turn_complete) {
-      flushPendingText()
-      return
-    }
-
-    for (const part of ev.content?.parts ?? []) {
-
-      // ── TOOL CALLS ────────────────────────────────────────────────────────
-      if (part.function_call) {
-        flushPendingText()
-        const { name, args = {} } = part.function_call
-
-        if (name === 'search_images') {
-          scheduleUpdate(() => {
-            transitionTo(0)
-            setLive({ label: 'Collecting images from Unsplash', current: 0, total: 0 })
-          })
-
-        } else if (name === 'annotate_image') {
-          annotateIdx.current++
-          const cur = annotateIdx.current
-          const tot = totalImages.current
-          scheduleUpdate(() => {
-            if (cur === 1) transitionTo(1)
-            setLive({ label: 'Annotating with Gemini Vision', current: cur, total: tot })
-          })
-
-        } else if (name === 'validate_annotation') {
-          validateIdx.current++
-          const cur = validateIdx.current
-          const tot = annotateIdx.current
-          scheduleUpdate(() => {
-            if (cur === 1) transitionTo(2)
-            setLive({ label: 'Validating annotations', current: cur, total: tot })
-          })
-
-        } else if (name === 'deduplicate') {
-          const n = totalImages.current
-          scheduleUpdate(() => {
-            transitionTo(3)
-            setLive({ label: 'Scanning for near-duplicates', current: 0, total: 0 })
-            pushMsg(`Scanning ${n} images for near-duplicates…`)
-          })
-
-        } else if (name === 'export_dataset') {
-          scheduleUpdate(() => {
-            transitionTo(4)
-            setLive({ label: 'Generating YOLO & COCO archives', current: 0, total: 0 })
-            pushMsg('Building YOLO and COCO zip archives…')
-          })
-        }
-        void args
-      }
-
-      // ── TOOL RESPONSES ────────────────────────────────────────────────────
-      if (part.function_response) {
-        const { name, response: resp } = part.function_response
-        const r   = resp as Record<string, unknown>
-        const idx = TOOL_STEP[name]
-        const err = r.status === 'error'
-
-        if (name === 'search_images') {
-          if (err) {
-            scheduleUpdate(() => { setLive(null); markStep(idx, 'error'); pushMsg(`Search failed: ${r.message}`) })
-          } else {
-            const collected = r.collected as number
-            totalImages.current = collected
-            scheduleUpdate(() => {
-              setLive(null)
-              markStep(idx, 'done', `${collected} collected`)
-              pushMsg(
-                `Found ${collected} images and uploaded them to GCS.`,
-                'Starting Gemini Vision annotation on each one…'
-              )
-            })
-          }
-
-        } else if (name === 'annotate_image') {
-          const anns = (r.annotations as Array<Record<string, unknown>>) ?? []
-          if (anns.length > 0) {
-            const labels = anns.map(a =>
-              `${a.class_name} · ${Math.round((a.confidence as number) * 100)}%`
-            ).join('  ·  ')
-            scheduleUpdate(() => pushProg(`→ ${labels}`, 'pass'))
-          } else {
-            scheduleUpdate(() => pushProg('→ No object detected, skipping', 'neutral'))
-          }
-          if (annotateIdx.current >= totalImages.current && totalImages.current > 0) {
-            const total = totalImages.current
-            scheduleUpdate(() => {
-              setLive(null)
-              markStep(idx, 'done', `${total} annotated`)
-              pushMsg(`All ${total} images annotated. Running validation…`)
-            })
-          }
-
-        } else if (name === 'validate_annotation') {
-          const passed = r.passed as boolean
-          if (passed) {
-            validatePassed.current++
-            const conf = Math.round((r.confidence as number) * 100)
-            scheduleUpdate(() => pushProg(`→ Confirmed  ${conf}% confidence`, 'pass'))
-          } else {
-            const reason = (r.rejection_reason as string) ?? 'low confidence'
-            scheduleUpdate(() => pushProg(`→ Rejected: ${reason}`, 'fail'))
-          }
-          if (validateIdx.current >= annotateIdx.current && annotateIdx.current > 0) {
-            const vp = validatePassed.current, vi = validateIdx.current
-            scheduleUpdate(() => {
-              setLive(null)
-              markStep(idx, 'done', `${vp} passed`)
-              pushMsg(`Validation complete — ${vp} of ${vi} passed.`)
-            })
-          }
-
-        } else if (name === 'deduplicate') {
-          if (err) {
-            scheduleUpdate(() => { setLive(null); markStep(idx, 'error'); pushMsg(`Deduplication failed: ${r.message}`) })
-          } else {
-            const kept = r.kept as number, removed = r.removed as number
-            scheduleUpdate(() => {
-              setLive(null)
-              markStep(idx, 'done', `${kept} unique`)
-              pushMsg(
-                removed > 0
-                  ? `Removed ${removed} near-duplicate${removed > 1 ? 's' : ''}. ${kept} unique images remain.`
-                  : `No duplicates found — all ${kept} images are unique.`
-              )
-            })
-          }
-
-        } else if (name === 'export_dataset') {
-          if (err) {
-            scheduleUpdate(() => { setLive(null); markStep(idx, 'error'); pushMsg(`Export failed: ${r.message}`) })
-          } else {
-            const count   = r.image_count as number
-            const splits  = r.splits as { train: number; val: number; test: number }
-            const exports = r.exports as Record<string, string>
-            const eid     = r.job_id as string
-            scheduleUpdate(() => {
-              setLive(null)
-              setExportData({ job_id: eid, exports, image_count: count, splits })
-              markStep(idx, 'done', `${count} images`)
-              pushMsg(
-                `Dataset ready! ${count} images exported in YOLO and COCO format.`,
-                splits ? `${splits.train} train · ${splits.val} val · ${splits.test} test` : undefined
-              )
-            })
-          }
-        }
-      }
-
-      // ── AGENT TEXT (streaming tokens accumulate, flushed before tool events) ─
-      if (part.text && ev.author !== 'user') {
-        pendingText.current += part.text as string
-      }
-    }
-  }
-
+  // Start the job if the context doesn't already have it (e.g. page refresh)
   useEffect(() => {
-    if (!jobId || !prompt || started.current) return
-    started.current = true
-    nextUpdateAt.current = 0
+    if (!decodedId || !prompt) return
+    if (!job || job.jobId !== decodedId) {
+      startJob(decodedId, prompt, query || prompt)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decodedId])
 
-    const stop = streamRun(
-      decodeURIComponent(jobId), prompt, handleEvent,
-      () => {
-        // flush any final agent text then mark complete
-        const t = pendingText.current.trim()
-        if (t) { pushMsg(t); pendingText.current = '' }
-        setTimeout(() => {
-          setDone(true)
-          setLive(null)
-          setSteps(p => p.map(s =>
-            s.status === 'running' || s.status === 'pending' ? { ...s, status: 'done' } : s
-          ))
-        }, nextUpdateAt.current - Date.now() + 200)
-      },
-      err => { setError(err.message); setLive(null) },
-    )
-    return stop
-  }, [jobId, prompt])
-
+  // Auto-scroll chat log
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, live])
+  }, [job?.messages, job?.live])
+
+  if (!job) return null
+
+  const { steps, messages, live, exportData, done, error } = job
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
@@ -397,6 +146,7 @@ export default function JobDetail() {
               </div>
             )}
 
+            {/* Download card — shown inline in chat when pipeline completes */}
             {done && exportData && exportData.job_id && (
               <div className="animate-fade-in ml-10 mt-1">
                 <div className="glass-sm px-4 py-4">

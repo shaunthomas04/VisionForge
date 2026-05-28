@@ -1,10 +1,23 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, Sparkles, Image, ShieldCheck, PackageOpen, HelpCircle } from 'lucide-react'
 import { createSession } from '../lib/api'
+import { useJob } from '../contexts/JobContext'
 import HelpModal from '../components/HelpModal'
 
-const EXAMPLES = ['gaming mice', 'golden retrievers', 'espresso machines', 'vintage bicycles', 'rubber ducks']
+const EXAMPLES_POOL = [
+  'gaming mice', 'golden retrievers', 'espresso machines', 'vintage bicycles', 'rubber ducks',
+  'street cats', 'office chairs', 'mechanical keyboards', 'sneakers', 'succulent plants',
+  'vintage cameras', 'hot air balloons', 'traffic cones', 'fire hydrants', 'chess pieces',
+  'sushi rolls', 'skateboard decks', 'astronaut helmets', 'neon signs', 'coffee cups',
+  'mushrooms', 'butterflies', 'electric guitars', 'beach umbrellas', 'vinyl records',
+  'sports cars', 'tabby cats', 'bread loaves', 'bicycles', 'sunflowers',
+]
+
+function pickRandom(pool: string[], n: number, exclude: string[] = []) {
+  const available = pool.filter(x => !exclude.includes(x))
+  return [...available].sort(() => Math.random() - 0.5).slice(0, n)
+}
 
 const FEATURES = [
   { icon: Image,       color: 'text-blue-400',   bg: 'bg-blue-400/10',   label: 'Auto image collection' },
@@ -19,7 +32,21 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [error, setError]   = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
-  const navigate = useNavigate()
+  const [examples, setExamples] = useState(() => pickRandom(EXAMPLES_POOL, 5))
+  const [exOpacity, setExOpacity] = useState(1)
+  const navigate   = useNavigate()
+  const { startJob } = useJob()
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setExOpacity(0)
+      setTimeout(() => {
+        setExamples(prev => pickRandom(EXAMPLES_POOL, 5, prev))
+        setExOpacity(1)
+      }, 250)
+    }, 3500)
+    return () => clearInterval(id)
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -28,8 +55,14 @@ export default function Home() {
     setError(null)
     try {
       const sessionId = await createSession()
-      const prompt = `Build a dataset of ${query.trim()} with ${count} images`
-      navigate(`/job/${encodeURIComponent(sessionId)}?q=${encodeURIComponent(prompt)}`)
+      const label  = query.trim()
+      const prompt = `Build a dataset of ${label} with ${count} images`
+      startJob(sessionId, prompt, label)
+      navigate(
+        `/job/${encodeURIComponent(sessionId)}` +
+        `?q=${encodeURIComponent(prompt)}` +
+        `&label=${encodeURIComponent(label)}`
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to connect to agent')
       setLoading(false)
@@ -126,8 +159,11 @@ export default function Home() {
         {/* Examples + help */}
         <div className="mt-6 text-center animate-fade-in">
           <p className="text-xs text-muted-fg mb-3">Try an example</p>
-          <div className="flex flex-wrap gap-2 justify-center mb-4">
-            {EXAMPLES.map(ex => (
+          <div
+            className="flex flex-wrap gap-2 justify-center mb-4"
+            style={{ opacity: exOpacity, transition: 'opacity 250ms ease' }}
+          >
+            {examples.map(ex => (
               <button key={ex} onClick={() => setQuery(ex)}
                 className="px-3 py-1.5 text-xs rounded-full border border-border bg-surface-2 hover:bg-muted/40 hover:border-border-bright text-muted-fg hover:text-fg transition-all duration-150 cursor-pointer">
                 {ex}

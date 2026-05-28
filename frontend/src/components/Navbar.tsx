@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Database, HelpCircle } from 'lucide-react'
 import HelpModal from './HelpModal'
+import { useJob } from '../contexts/JobContext'
 
 /** CV dataset icon — image frame with a detection bounding box inside */
 function VisionForgeLogo() {
@@ -45,6 +46,12 @@ function VisionForgeLogo() {
 export default function Navbar() {
   const { pathname } = useLocation()
   const [showHelp, setShowHelp] = useState(false)
+  const { job } = useJob()
+
+  const isRunning = job && !job.done && !job.error
+  const jobUrl    = job
+    ? `/job/${encodeURIComponent(job.jobId)}?q=${encodeURIComponent(job.prompt)}&label=${encodeURIComponent(job.query)}`
+    : '/'
 
   return (
     <>
@@ -70,6 +77,20 @@ export default function Navbar() {
               <Database className="w-3.5 h-3.5" />
               Datasets
             </NavLink>
+
+            {/* Active job badge — visible while pipeline is running */}
+            {isRunning && (
+              <Link
+                to={jobUrl}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold
+                           text-primary bg-primary-dim border border-primary/20 ml-1
+                           hover:bg-primary/15 transition-colors"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse flex-shrink-0" />
+                {job.query || 'Job running'}
+              </Link>
+            )}
+
             <button
               onClick={() => setShowHelp(true)}
               className="btn-ghost flex items-center gap-1.5 ml-1"
