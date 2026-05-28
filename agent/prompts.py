@@ -10,33 +10,38 @@ collection..." Then immediately begin the pipeline without waiting for a reply.
 
 ## STEP 0 — DATASET DISCOVERY
 
-If MongoDB tools are available, search the "datasets" collection in database
-"visionforge" for existing datasets matching the user's query (case-insensitive
-regex on the "query" field). If good matches are found, show them and ask if the
-user wants one or a new build. Only skip to Step 1 if the user says new, or no
-matches exist. If MongoDB is unavailable, skip this step silently.
+If MongoDB tools are available, call the "find" tool with:
+  database: "visionforge"
+  collection: "datasets"
+  filter: a case-insensitive regex match on the "query" field
+
+If good matches exist, show them and ask if the user wants one or a new build.
+Only proceed to Step 1 if the user says new, or no matches were found.
+If MongoDB is unavailable, skip this step silently.
 
 ## STEP 1 — SEARCH
 
 Call search_images(query, count, min_resolution).
 Save the returned job_id and the full images list.
 
-If MongoDB tools are available, call insert-one with:
+If MongoDB tools are available, call "insert-many" with:
   database: "visionforge"
   collection: "jobs"
-  document fields: job_id, query, status="running", created_at=now,
-    config.target_count=count, config.export_formats=["yolo","coco"],
-    stats.collected=n, stats.annotated=0, stats.validated=0
+  documents: array containing one object with fields:
+    job_id, query, status="running", created_at=now,
+    config containing target_count and export_formats ["yolo","coco"],
+    stats containing collected=N, annotated=0, validated=0
 
 ## STEP 2 — ANNOTATE
 
 For each image, call annotate_image(job_id, image_id, gcs_uri).
 Flatten all returned annotations into a master list (status == "ok" only).
 
-If MongoDB tools are available, for each image call insert-one with:
+If MongoDB tools are available, call "insert-many" with:
   database: "visionforge"
   collection: "images"
-  document fields: image_id, job_id, gcs_uri, width, height, status="annotated"
+  documents: array of objects each containing:
+    image_id, job_id, gcs_uri, width, height, status="annotated"
 
 ## STEP 3 — VALIDATE
 
@@ -44,10 +49,11 @@ For each annotation call validate_annotation(job_id, annotation_id,
 confidence_threshold, image_id, gcs_uri, class_name, bbox).
 Collect passed == True into validated_annotations.
 
-If MongoDB tools are available, for each passed annotation call insert-one with:
+If MongoDB tools are available, call "insert-many" with:
   database: "visionforge"
   collection: "annotations"
-  document fields: annotation_id, image_id, job_id, class_name, bbox,
+  documents: array of objects each containing:
+    annotation_id, image_id, job_id, class_name, bbox,
     confidence, validated=true
 
 ## STEP 4 — DEDUPLICATE
@@ -60,12 +66,13 @@ Filter validated_annotations to only keep image_ids in kept_records.
 Call export_dataset(job_id, annotations, formats=["yolo","coco"]).
 
 If MongoDB tools are available:
-  Call insert-one with database "visionforge", collection "datasets",
-    document fields: job_id, version=1, image_count, class_counts, splits,
-    exports, created_at=now
+  Call "insert-many" with database "visionforge", collection "datasets",
+    documents: array containing one object with fields:
+    job_id, version=1, image_count, class_counts, splits, exports, created_at=now
 
-  Call update-one with database "visionforge", collection "jobs",
-    filter on job_id, set status="completed" and completed_at=now
+  Call "update-many" with database "visionforge", collection "jobs",
+    filter matching the job_id,
+    update setting status="completed" and completed_at=now
 
 After export, summarise: total images, classes found, split sizes, GCS URIs.
 
