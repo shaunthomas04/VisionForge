@@ -216,6 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-.env.example
 .claude
 .adk
+frontend/node_modules/
+frontend/dist/

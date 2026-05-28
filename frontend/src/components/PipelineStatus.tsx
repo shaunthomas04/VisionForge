@@ -1,4 +1,4 @@
-import { Check, Loader2, Circle } from 'lucide-react'
+import { Check, Circle } from 'lucide-react'
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'error'
 
@@ -47,8 +47,11 @@ function StepIcon({ status }: { status: StepStatus }) {
     </div>
   )
   if (status === 'running') return (
-    <div className="w-5 h-5 rounded-full bg-primary-dim border border-primary/40 flex items-center justify-center flex-shrink-0 shadow-[0_0_8px_rgba(99,102,241,0.3)]">
-      <Loader2 className="w-2.5 h-2.5 text-primary animate-spin" />
+    <div className="relative w-5 h-5 flex-shrink-0 flex items-center justify-center">
+      <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" style={{ animationDuration: '1.2s' }} />
+      <div className="w-5 h-5 rounded-full bg-primary-dim border border-primary/50 flex items-center justify-center shadow-[0_0_8px_rgba(99,102,241,0.35)]">
+        <div className="w-2 h-2 rounded-full bg-primary" />
+      </div>
     </div>
   )
   if (status === 'error') return (

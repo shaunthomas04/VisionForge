@@ -106,7 +106,7 @@ export default function Home() {
             <div className="rounded-xl border border-danger/30 bg-danger-dim px-4 py-3 text-sm text-danger leading-relaxed">
               {error}
               <span className="block text-xs mt-1 text-danger/70">
-                Make sure <code className="bg-danger/10 px-1 rounded">adk api_server . --allow_origins http://localhost:5174</code> is running.
+                Make sure <code className="bg-danger/10 px-1 rounded">adk api_server . --allow_origins http://localhost:5173</code> is running.
               </span>
             </div>
           )}
