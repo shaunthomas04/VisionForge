@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { streamRun, type AgentEvent } from '../lib/api'
 import PipelineStatus, { type PipelineStep } from '../components/PipelineStatus'
 import ExportPanel from '../components/ExportPanel'
-import { Bot } from 'lucide-react'
+import { Bot, Download } from 'lucide-react'
 
 interface Message {
   role: 'user' | 'agent' | 'progress'
@@ -19,6 +19,7 @@ interface LiveProgress {
 }
 
 interface ExportData {
+  job_id: string
   exports: Record<string, string>
   image_count: number
   splits?: { train: number; val: number; test: number }
@@ -234,9 +235,10 @@ export default function JobDetail() {
             const count   = r.image_count as number
             const splits  = r.splits as { train: number; val: number; test: number }
             const exports = r.exports as Record<string, string>
+            const eid     = r.job_id as string
             scheduleUpdate(() => {
               setLive(null)
-              setExportData({ exports, image_count: count, splits })
+              setExportData({ job_id: eid, exports, image_count: count, splits })
               markStep(idx, 'done', `${count} images`)
               pushMsg(
                 `Dataset ready! ${count} images exported in YOLO and COCO format.`,
@@ -294,6 +296,7 @@ export default function JobDetail() {
           </div>
           {exportData && (
             <ExportPanel
+              jobId={exportData.job_id}
               exports={exportData.exports}
               imageCount={exportData.image_count}
               splits={exportData.splits}
@@ -391,6 +394,29 @@ export default function JobDetail() {
             {error && (
               <div className="rounded-xl border border-danger/25 bg-danger-dim px-4 py-3 text-sm text-danger">
                 {error}
+              </div>
+            )}
+
+            {done && exportData && exportData.job_id && (
+              <div className="animate-fade-in ml-10 mt-1">
+                <div className="glass-sm px-4 py-4">
+                  <p className="text-xs font-bold text-muted-fg uppercase tracking-widest mb-3">Download Your Dataset</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {Object.entries(exportData.exports)
+                      .filter(([, uri]) => uri && !uri.startsWith('error'))
+                      .map(([fmt]) => (
+                        <a
+                          key={fmt}
+                          href={`/api/download/${exportData.job_id}/${fmt}`}
+                          download
+                          className="btn-primary text-xs flex-1 justify-center"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Download {fmt.toUpperCase()}
+                        </a>
+                      ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>

@@ -7,6 +7,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/apps': 'http://localhost:8000',
+      '/api':  'http://localhost:8000',
       '/run_sse': {
         target: 'http://localhost:8000',
         changeOrigin: false,
