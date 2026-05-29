@@ -64,7 +64,7 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
         Multiple annotations are returned when multiple instances appear in the image.
         Returns status 'skipped' with empty annotations list if no objects found.
     """
-    model_name = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-002")
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
     try:
         gcs = _get_gcs_client()

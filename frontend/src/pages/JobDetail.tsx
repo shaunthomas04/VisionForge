@@ -27,7 +27,7 @@ export default function JobDetail() {
   // Auto-scroll chat log
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
-  }, [job?.messages, job?.live])
+  }, [job?.messages, job?.live, job?.done])
 
   if (!job) return null
 

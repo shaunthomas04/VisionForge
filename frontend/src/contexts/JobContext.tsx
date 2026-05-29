@@ -100,16 +100,22 @@ const Ctx = createContext<JobCtxValue>({ job: null, startJob: () => {}, clearJob
 export function JobProvider({ children }: { children: ReactNode }) {
   const [job, setJob] = useState<JobState | null>(null)
 
-  // Mutable counters — no re-renders needed
   const stopRef        = useRef<(() => void) | null>(null)
   const totalImages    = useRef(0)
-  const annotateIdx    = useRef(0)
-  const validateIdx    = useRef(0)
-  const validatePassed = useRef(0)
+  // Annotation: track calls (for progress bar) and responses (for completion) separately
+  const annotateCallIdx  = useRef(0)
+  const annotateRespIdx  = useRef(0)
+  const totalAnnotations = useRef(0)      // sum of bbox annotations across all images
+  const annotateCompleteFired = useRef(false)
+  // Validation: same separation — calls drive the progress bar, responses detect completion
+  const validateCallIdx  = useRef(0)
+  const validateRespIdx  = useRef(0)
+  const validatePassed   = useRef(0)
+  const validateCompleteFired = useRef(false)
+
   const pendingText    = useRef('')
   const nextUpdateAt   = useRef(0)
 
-  // Spreads rapid batched events 100 ms apart so they animate sequentially
   function scheduleUpdate(fn: (prev: JobState) => JobState) {
     const now  = Date.now()
     const when = Math.max(now + 10, nextUpdateAt.current)
@@ -126,7 +132,6 @@ export function JobProvider({ children }: { children: ReactNode }) {
   }
 
   function handleEvent(ev: AgentEvent) {
-    // Check turn_complete at any nesting level ADK might use
     const tc = ev as Record<string, unknown>
     if (
       ev.turn_complete ||
@@ -140,7 +145,6 @@ export function JobProvider({ children }: { children: ReactNode }) {
     for (const part of ev.content?.parts ?? []) {
       const p = part as Record<string, unknown>
 
-      // ADK may serialize Gemini Part as camelCase (protobuf JSON) or snake_case (Python default)
       const fc = (p.function_call ?? p.functionCall) as
         | { name: string; args?: Record<string, unknown> }
         | undefined
@@ -160,8 +164,8 @@ export function JobProvider({ children }: { children: ReactNode }) {
           }))
 
         } else if (name === 'annotate_image') {
-          annotateIdx.current++
-          const cur = annotateIdx.current
+          annotateCallIdx.current++
+          const cur = annotateCallIdx.current
           const tot = totalImages.current
           scheduleUpdate(j => ({
             ...(cur === 1 ? withTransition(j, 1) : j),
@@ -169,9 +173,10 @@ export function JobProvider({ children }: { children: ReactNode }) {
           }))
 
         } else if (name === 'validate_annotation') {
-          validateIdx.current++
-          const cur = validateIdx.current
-          const tot = annotateIdx.current
+          validateCallIdx.current++
+          const cur = validateCallIdx.current
+          // Use totalAnnotations as denominator; clamp to cur to prevent >100%
+          const tot = Math.max(totalAnnotations.current, cur)
           scheduleUpdate(j => ({
             ...(cur === 1 ? withTransition(j, 2) : j),
             live: { label: 'Validating annotations', current: cur, total: tot },
@@ -220,8 +225,10 @@ export function JobProvider({ children }: { children: ReactNode }) {
           }
 
         } else if (name === 'annotate_image') {
+          annotateRespIdx.current++
           const anns = (r.annotations as Array<Record<string, unknown>>) ?? []
           if (anns.length > 0) {
+            totalAnnotations.current += anns.length
             const labels = anns
               .map(a => `${a.class_name} · ${Math.round((a.confidence as number) * 100)}%`)
               .join('  ·  ')
@@ -229,35 +236,43 @@ export function JobProvider({ children }: { children: ReactNode }) {
           } else {
             scheduleUpdate(j => withMsg(j, 'progress', '→ No object detected, skipping', undefined, 'neutral'))
           }
-          if (annotateIdx.current >= totalImages.current && totalImages.current > 0) {
+          // Fire "annotation complete" exactly once — when all responses have arrived
+          if (
+            annotateRespIdx.current >= totalImages.current &&
+            totalImages.current > 0 &&
+            !annotateCompleteFired.current
+          ) {
+            annotateCompleteFired.current = true
             const total = totalImages.current
+            const annTotal = totalAnnotations.current
             scheduleUpdate(j =>
               withMsg(
                 withStep({ ...j, live: null }, idx, 'done', `${total} annotated`),
                 'agent',
-                `All ${total} images annotated. Running validation…`,
+                `All ${total} images annotated (${annTotal} objects found). Running validation…`,
               )
             )
           }
 
         } else if (name === 'validate_annotation') {
+          validateRespIdx.current++
           const passed = r.passed as boolean
-          if (passed) {
-            validatePassed.current++
-            const conf = Math.round((r.confidence as number) * 100)
-            scheduleUpdate(j => withMsg(j, 'progress', `→ Confirmed  ${conf}% confidence`, undefined, 'pass'))
-          } else {
-            const reason = (r.rejection_reason as string) ?? 'low confidence'
-            scheduleUpdate(j => withMsg(j, 'progress', `→ Rejected: ${reason}`, undefined, 'fail'))
-          }
-          if (validateIdx.current >= annotateIdx.current && annotateIdx.current > 0) {
+          if (passed) validatePassed.current++
+
+          // Fire "validation complete" exactly once — when responses match calls
+          if (
+            validateRespIdx.current >= validateCallIdx.current &&
+            validateCallIdx.current > 0 &&
+            !validateCompleteFired.current
+          ) {
+            validateCompleteFired.current = true
             const vp = validatePassed.current
-            const vi = validateIdx.current
+            const vi = validateRespIdx.current
             scheduleUpdate(j =>
               withMsg(
                 withStep({ ...j, live: null }, idx, 'done', `${vp} passed`),
                 'agent',
-                `Validation complete — ${vp} of ${vi} passed.`,
+                `Validation complete — ${vp} of ${vi} annotations passed.`,
               )
             )
           }
@@ -325,7 +340,6 @@ export function JobProvider({ children }: { children: ReactNode }) {
       setJob(j => (j ? withMsg(j, 'agent', t) : j))
       pendingText.current = ''
     }
-    // Fire after all scheduled updates have settled
     const delay = Math.max(200, nextUpdateAt.current - Date.now() + 200)
     setTimeout(() => {
       setJob(j =>
@@ -350,12 +364,17 @@ export function JobProvider({ children }: { children: ReactNode }) {
   function startJob(jobId: string, prompt: string, query: string) {
     if (stopRef.current) { stopRef.current(); stopRef.current = null }
 
-    totalImages.current    = 0
-    annotateIdx.current    = 0
-    validateIdx.current    = 0
-    validatePassed.current = 0
-    pendingText.current    = ''
-    nextUpdateAt.current   = 0
+    totalImages.current          = 0
+    annotateCallIdx.current      = 0
+    annotateRespIdx.current      = 0
+    totalAnnotations.current     = 0
+    annotateCompleteFired.current = false
+    validateCallIdx.current      = 0
+    validateRespIdx.current      = 0
+    validatePassed.current       = 0
+    validateCompleteFired.current = false
+    pendingText.current          = ''
+    nextUpdateAt.current         = 0
 
     setJob({
       jobId,

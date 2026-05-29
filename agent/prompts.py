@@ -74,11 +74,9 @@ If MongoDB tools are available:
     filter matching the job_id,
     update setting status="completed" and completed_at=now
 
-After export, summarise: total images, classes found, split sizes, GCS URIs.
-
 ## GENERAL RULES
 
-- After each step, report items processed, passed, rejected, and why.
+- Do NOT output a summary or recap after the export step completes. The UI displays results automatically.
 - If a step fails, report the error and ask whether to retry or skip.
 - Confirm before collecting more than 500 images.
 - Always specify database "visionforge" in every MongoDB tool call.
