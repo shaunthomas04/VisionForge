@@ -89,8 +89,8 @@ const INIT_STEPS: PipelineStep[] = [
 ]
 
 const TOOL_STEP: Record<string, number> = {
-  search_images: 0, annotate_image: 1,
-  validate_annotation: 2, deduplicate: 3, export_dataset: 4,
+  search_images: 0, annotate_images: 1,
+  validate_annotations: 2, deduplicate: 3, export_dataset: 4,
 }
 
 // ── Context ──────────────────────────────────────────────────────────────────
@@ -100,21 +100,9 @@ const Ctx = createContext<JobCtxValue>({ job: null, startJob: () => {}, clearJob
 export function JobProvider({ children }: { children: ReactNode }) {
   const [job, setJob] = useState<JobState | null>(null)
 
-  const stopRef        = useRef<(() => void) | null>(null)
-  const totalImages    = useRef(0)
-  // Annotation: track calls (for progress bar) and responses (for completion) separately
-  const annotateCallIdx  = useRef(0)
-  const annotateRespIdx  = useRef(0)
-  const totalAnnotations = useRef(0)      // sum of bbox annotations across all images
-  const annotateCompleteFired = useRef(false)
-  // Validation: same separation — calls drive the progress bar, responses detect completion
-  const validateCallIdx  = useRef(0)
-  const validateRespIdx  = useRef(0)
-  const validatePassed   = useRef(0)
-  const validateCompleteFired = useRef(false)
-
-  const pendingText    = useRef('')
-  const nextUpdateAt   = useRef(0)
+  const stopRef     = useRef<(() => void) | null>(null)
+  const pendingText = useRef('')
+  const nextUpdateAt = useRef(0)
 
   function scheduleUpdate(fn: (prev: JobState) => JobState) {
     const now  = Date.now()
@@ -163,35 +151,29 @@ export function JobProvider({ children }: { children: ReactNode }) {
             live: { label: 'Collecting images', current: 0, total: 0 },
           }))
 
-        } else if (name === 'annotate_image') {
-          annotateCallIdx.current++
-          const cur = annotateCallIdx.current
-          const tot = totalImages.current
+        } else if (name === 'annotate_images') {
+          const n = (fc.args?.images as unknown[])?.length ?? 0
           scheduleUpdate(j => ({
-            ...(cur === 1 ? withTransition(j, 1) : j),
-            live: { label: 'Annotating with Gemini Vision', current: cur, total: tot },
+            ...withTransition(j, 1),
+            live: { label: `Annotating ${n} images in parallel`, current: 0, total: 0 },
           }))
 
-        } else if (name === 'validate_annotation') {
-          validateCallIdx.current++
-          const cur = validateCallIdx.current
-          // Use totalAnnotations as denominator; clamp to cur to prevent >100%
-          const tot = Math.max(totalAnnotations.current, cur)
+        } else if (name === 'validate_annotations') {
+          const n = (fc.args?.annotations as unknown[])?.length ?? 0
           scheduleUpdate(j => ({
-            ...(cur === 1 ? withTransition(j, 2) : j),
-            live: { label: 'Validating annotations', current: cur, total: tot },
+            ...withTransition(j, 2),
+            live: { label: `Validating ${n} annotations in parallel`, current: 0, total: 0 },
           }))
 
         } else if (name === 'deduplicate') {
-          const n = totalImages.current
           scheduleUpdate(j => ({
-            ...withTransition(withMsg(j, 'agent', `Scanning ${n} images for near-duplicates…`), 3),
+            ...withTransition(j, 3),
             live: { label: 'Scanning for near-duplicates', current: 0, total: 0 },
           }))
 
         } else if (name === 'export_dataset') {
           scheduleUpdate(j => ({
-            ...withTransition(withMsg(j, 'agent', 'Building YOLO and COCO zip archives…'), 4),
+            ...withTransition(j, 4),
             live: { label: 'Generating YOLO & COCO archives', current: 0, total: 0 },
           }))
         }
@@ -213,66 +195,51 @@ export function JobProvider({ children }: { children: ReactNode }) {
             }))
           } else {
             const collected = r.collected as number
-            totalImages.current = collected
             scheduleUpdate(j =>
               withMsg(
                 withStep({ ...j, live: null }, idx, 'done', `${collected} collected`),
                 'agent',
                 `Found ${collected} images and uploaded them to GCS.`,
-                'Starting Gemini Vision annotation on each one…',
               )
             )
           }
 
-        } else if (name === 'annotate_image') {
-          annotateRespIdx.current++
-          const anns = (r.annotations as Array<Record<string, unknown>>) ?? []
-          if (anns.length > 0) {
-            totalAnnotations.current += anns.length
-            const labels = anns
-              .map(a => `${a.class_name} · ${Math.round((a.confidence as number) * 100)}%`)
-              .join('  ·  ')
-            scheduleUpdate(j => withMsg(j, 'progress', `→ ${labels}`, undefined, 'pass'))
+        } else if (name === 'annotate_images') {
+          if (err) {
+            scheduleUpdate(j => ({
+              ...withMsg(j, 'agent', `Annotation failed: ${r.message}`),
+              live: null,
+              steps: j.steps.map((s, i) => (i === idx ? { ...s, status: 'error' } : s)),
+            }))
           } else {
-            scheduleUpdate(j => withMsg(j, 'progress', '→ No object detected, skipping', undefined, 'neutral'))
-          }
-          // Fire "annotation complete" exactly once — when all responses have arrived
-          if (
-            annotateRespIdx.current >= totalImages.current &&
-            totalImages.current > 0 &&
-            !annotateCompleteFired.current
-          ) {
-            annotateCompleteFired.current = true
-            const total = totalImages.current
-            const annTotal = totalAnnotations.current
+            const processed = r.processed as number
+            const annCount  = r.annotation_count as number
+            const skipped   = r.skipped as number
             scheduleUpdate(j =>
               withMsg(
-                withStep({ ...j, live: null }, idx, 'done', `${total} annotated`),
+                withStep({ ...j, live: null }, idx, 'done', `${annCount} objects found`),
                 'agent',
-                `All ${total} images annotated (${annTotal} objects found). Running validation…`,
+                `Annotated ${processed} images — ${annCount} objects detected${skipped > 0 ? `, ${skipped} skipped` : ''}.`,
               )
             )
           }
 
-        } else if (name === 'validate_annotation') {
-          validateRespIdx.current++
-          const passed = r.passed as boolean
-          if (passed) validatePassed.current++
-
-          // Fire "validation complete" exactly once — when responses match calls
-          if (
-            validateRespIdx.current >= validateCallIdx.current &&
-            validateCallIdx.current > 0 &&
-            !validateCompleteFired.current
-          ) {
-            validateCompleteFired.current = true
-            const vp = validatePassed.current
-            const vi = validateRespIdx.current
+        } else if (name === 'validate_annotations') {
+          if (err) {
+            scheduleUpdate(j => ({
+              ...withMsg(j, 'agent', `Validation failed: ${r.message}`),
+              live: null,
+              steps: j.steps.map((s, i) => (i === idx ? { ...s, status: 'error' } : s)),
+            }))
+          } else {
+            const passed   = r.passed as number
+            const total    = r.total as number
+            const rejected = r.rejected as number
             scheduleUpdate(j =>
               withMsg(
-                withStep({ ...j, live: null }, idx, 'done', `${vp} passed`),
+                withStep({ ...j, live: null }, idx, 'done', `${passed} passed`),
                 'agent',
-                `Validation complete — ${vp} of ${vi} annotations passed.`,
+                `Validation complete — ${passed} of ${total} passed${rejected > 0 ? `, ${rejected} rejected` : ''}.`,
               )
             )
           }
@@ -319,7 +286,7 @@ export function JobProvider({ children }: { children: ReactNode }) {
                   `${count} images`,
                 ),
                 'agent',
-                `Dataset ready! ${count} images exported in YOLO and COCO format.`,
+                `Dataset ready — ${count} images exported in YOLO and COCO format.`,
                 splits ? `${splits.train} train · ${splits.val} val · ${splits.test} test` : undefined,
               )
             )
@@ -364,17 +331,8 @@ export function JobProvider({ children }: { children: ReactNode }) {
   function startJob(jobId: string, prompt: string, query: string) {
     if (stopRef.current) { stopRef.current(); stopRef.current = null }
 
-    totalImages.current          = 0
-    annotateCallIdx.current      = 0
-    annotateRespIdx.current      = 0
-    totalAnnotations.current     = 0
-    annotateCompleteFired.current = false
-    validateCallIdx.current      = 0
-    validateRespIdx.current      = 0
-    validatePassed.current       = 0
-    validateCompleteFired.current = false
-    pendingText.current          = ''
-    nextUpdateAt.current         = 0
+    pendingText.current  = ''
+    nextUpdateAt.current = 0
 
     setJob({
       jobId,

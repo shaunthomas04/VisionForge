@@ -143,27 +143,41 @@ def export_dataset(
     job_id: str,
     annotations: list | None = None,
     formats: list[str] | None = None,
+    target_count: int | None = None,
 ) -> dict:
     """Export the validated dataset as YOLO and/or COCO format zip archives in GCS.
 
     Args:
         job_id: The pipeline job to export.
-        annotations: List of validated annotation dicts, each containing image_id,
-            gcs_uri, class_name, bbox (x/y/w/h pixels), width, height, confidence.
-            Pass the combined results from annotate_image and search_images steps.
+        annotations: List of validated annotation dicts from validate_annotations,
+            each containing image_id, gcs_uri, class_name, bbox (x/y/w/h pixels),
+            width, height, confidence.
         formats: List of export formats. Supported: 'yolo', 'coco'. Defaults to both.
+        target_count: If set, keep only the top N annotations by confidence so the
+            final dataset matches the user's requested size exactly.
 
     Returns:
         A dict with image_count, class_counts, split sizes, and GCS URIs for each format.
     """
     if formats is None:
         formats = ["yolo", "coco"]
+    # Normalize: agent may pass the full validate_annotations response dict instead of the list
+    if isinstance(annotations, dict):
+        annotations = (
+            annotations.get("validated_annotations")
+            or annotations.get("annotations")
+            or []
+        )
     if not annotations:
         return {
             "status": "error",
             "job_id": job_id,
             "message": "No annotations provided. Pass the validated annotation list from previous steps.",
         }
+
+    # Cap to target_count, keeping highest-confidence annotations
+    if target_count and len(annotations) > target_count:
+        annotations = sorted(annotations, key=lambda a: a.get("confidence", 0), reverse=True)[:target_count]
 
     gcs = _get_gcs_client()
     export_bucket = os.environ.get("GCS_BUCKET_EXPORTS", "visionforge-exports")

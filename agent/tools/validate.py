@@ -2,6 +2,7 @@ import io
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from google.cloud import storage
 from google import genai
@@ -89,6 +90,12 @@ def validate_annotation(
             "passed": False,
             "message": f"GCS download failed: {e}",
         }
+
+    # Normalize bbox — Gemini sometimes returns [x,y,w,h] list instead of dict
+    if isinstance(bbox, list) and len(bbox) >= 4:
+        bbox = {"x": bbox[0], "y": bbox[1], "w": bbox[2], "h": bbox[3]}
+    elif not isinstance(bbox, dict):
+        bbox = None
 
     if bbox:
         x, y, w, h = bbox.get("x", 0), bbox.get("y", 0), bbox.get("w", 0), bbox.get("h", 0)
@@ -178,3 +185,51 @@ def validate_annotation(
             "height": height,
         })
     return out
+
+
+def validate_annotations(
+    job_id: str,
+    annotations: list,
+    confidence_threshold: float = 0.75,
+) -> dict:
+    """Validate a batch of annotations in parallel using a second Gemini pass.
+
+    Args:
+        job_id: The pipeline job this batch belongs to.
+        annotations: List of annotation dicts from annotate_images, each containing
+            annotation_id, image_id, gcs_uri, class_name, and bbox.
+        confidence_threshold: Minimum confidence score to accept (0.0-1.0).
+
+    Returns:
+        A dict with validated_annotations (passed only), passed count, and rejected count.
+    """
+    def _one(ann: dict) -> dict:
+        return validate_annotation(
+            job_id=job_id,
+            annotation_id=ann.get("annotation_id", ""),
+            confidence_threshold=confidence_threshold,
+            image_id=ann.get("image_id", ""),
+            gcs_uri=ann.get("gcs_uri", ""),
+            class_name=ann.get("class_name", ""),
+            bbox=ann.get("bbox"),
+        )
+
+    validated: list = []
+    rejected = 0
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        for result in executor.map(_one, annotations):
+            if result.get("passed"):
+                validated.append({k: v for k, v in result.items()
+                                   if k not in ("status", "passed", "rejection_reason")})
+            else:
+                rejected += 1
+
+    return {
+        "status": "ok",
+        "job_id": job_id,
+        "total": len(annotations),
+        "passed": len(validated),
+        "rejected": rejected,
+        "validated_annotations": validated,
+    }

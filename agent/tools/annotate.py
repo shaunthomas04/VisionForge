@@ -3,6 +3,7 @@ import json
 import os
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from google.cloud import storage
 from google import genai
@@ -118,13 +119,18 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
     for item in result:
         if not item.get("class_name"):
             continue
+        raw_bbox = item.get("bbox")
+        if isinstance(raw_bbox, list) and len(raw_bbox) >= 4:
+            raw_bbox = {"x": raw_bbox[0], "y": raw_bbox[1], "w": raw_bbox[2], "h": raw_bbox[3]}
+        elif not isinstance(raw_bbox, dict):
+            raw_bbox = None
         annotations.append({
             "annotation_id": str(uuid.uuid4()),
             "job_id": job_id,
             "image_id": image_id,
             "gcs_uri": gcs_uri,
             "class_name": item["class_name"],
-            "bbox": item.get("bbox"),
+            "bbox": raw_bbox,
             "confidence": item.get("confidence", 0),
             "description": item.get("description", ""),
         })
@@ -143,4 +149,39 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
         "job_id": job_id,
         "image_id": image_id,
         "annotations": annotations,
+    }
+
+
+def annotate_images(job_id: str, images: list) -> dict:
+    """Annotate a batch of images in parallel using Gemini Vision.
+
+    Args:
+        job_id: The pipeline job this batch belongs to.
+        images: List of image dicts from search_images, each containing
+            image_id and gcs_uri.
+
+    Returns:
+        A dict with all_annotations (flat list across all images),
+        processed count, and skipped count.
+    """
+    def _one(img: dict) -> dict:
+        return annotate_image(job_id, img["image_id"], img["gcs_uri"])
+
+    all_annotations: list = []
+    skipped = 0
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        for result in executor.map(_one, images):
+            if result["status"] == "ok":
+                all_annotations.extend(result["annotations"])
+            else:
+                skipped += 1
+
+    return {
+        "status": "ok",
+        "job_id": job_id,
+        "processed": len(images),
+        "skipped": skipped,
+        "annotation_count": len(all_annotations),
+        "all_annotations": all_annotations,
     }

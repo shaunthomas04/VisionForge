@@ -1,13 +1,13 @@
 from .search import search_images
-from .annotate import annotate_image
-from .validate import validate_annotation
+from .annotate import annotate_images
+from .validate import validate_annotations
 from .deduplicate import deduplicate
 from .export import export_dataset
 
 __all__ = [
     "search_images",
-    "annotate_image",
-    "validate_annotation",
+    "annotate_images",
+    "validate_annotations",
     "deduplicate",
     "export_dataset",
 ]

@@ -56,7 +56,7 @@ export default function Home() {
     try {
       const sessionId = await createSession()
       const label  = query.trim()
-      const prompt = `Build a dataset of ${label} with ${count} images`
+      const prompt = `Build a dataset of ${label} with around ${count} images`
       startJob(sessionId, prompt, label)
       navigate(
         `/job/${encodeURIComponent(sessionId)}` +
@@ -124,14 +124,14 @@ export default function Home() {
               <span className="text-sm font-bold text-primary">{count}</span>
             </div>
             <input
-              type="range" min={5} max={100} step={5} value={count}
+              type="range" min={5} max={500} step={5} value={count}
               onChange={e => setCount(Number(e.target.value))}
               className="w-full accent-primary cursor-pointer"
               disabled={loading}
             />
             <div className="flex justify-between text-xs text-muted-fg mt-1">
               <span>5 · quick test</span>
-              <span>100 · full dataset</span>
+              <span>500 · full dataset</span>
             </div>
           </div>
 

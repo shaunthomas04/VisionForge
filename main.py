@@ -38,14 +38,26 @@ def _get_db():
     return _db
 
 
+def _stamp(doc: dict) -> dict:
+    """Replace created_at with the ObjectId insertion timestamp (always accurate)."""
+    obj_id = doc.pop("_id", None)
+    if obj_id is not None:
+        try:
+            doc["created_at"] = obj_id.generation_time.isoformat()
+        except Exception:
+            pass
+    return doc
+
+
 @app.get("/api/datasets")
 async def list_datasets():
     db = _get_db()
     if db is None:
         return []
     try:
-        docs = list(db["datasets"].find({}, {"_id": 0}).sort("created_at", -1))
+        docs = list(db["datasets"].find({}).sort("_id", -1))
         for doc in docs:
+            _stamp(doc)
             job = db["jobs"].find_one({"job_id": doc.get("job_id")}, {"query": 1, "_id": 0})
             if job:
                 doc["query"] = job.get("query", "Unknown")
@@ -60,9 +72,10 @@ async def get_dataset(job_id: str):
     if db is None:
         raise HTTPException(status_code=503, detail="MongoDB not configured")
     try:
-        doc = db["datasets"].find_one({"job_id": job_id}, {"_id": 0})
+        doc = db["datasets"].find_one({"job_id": job_id})
         if not doc:
             raise HTTPException(status_code=404, detail="Dataset not found")
+        _stamp(doc)
         job = db["jobs"].find_one({"job_id": job_id}, {"query": 1, "_id": 0})
         if job:
             doc["query"] = job.get("query", "Unknown")

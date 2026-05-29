@@ -36,6 +36,13 @@ def deduplicate(
     Returns:
         A dict with kept count, removed count, and list of kept image records.
     """
+    # Normalize: agent may pass the full search_images response dict instead of the list
+    if isinstance(image_records, dict):
+        image_records = (
+            image_records.get("images")
+            or image_records.get("kept_records")
+            or []
+        )
     if not image_records:
         return {
             "status": "ok",

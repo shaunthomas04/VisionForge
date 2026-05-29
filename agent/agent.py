@@ -6,11 +6,11 @@ from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, SseConnectionParam
 from mcp import StdioServerParameters
 
 from .tools import (
-    annotate_image,
+    annotate_images,
     deduplicate,
     export_dataset,
     search_images,
-    validate_annotation,
+    validate_annotations,
 )
 from .prompts import AGENT_INSTRUCTION
 
@@ -18,8 +18,8 @@ load_dotenv()
 
 _tools = [
     search_images,
-    annotate_image,
-    validate_annotation,
+    annotate_images,
+    validate_annotations,
     deduplicate,
     export_dataset,
 ]

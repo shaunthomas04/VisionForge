@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useJob } from '../contexts/JobContext'
+import type { ExportData } from '../contexts/JobContext'
 import PipelineStatus from '../components/PipelineStatus'
 import ExportPanel from '../components/ExportPanel'
 import { Bot, Download } from 'lucide-react'
@@ -15,6 +16,8 @@ export default function JobDetail() {
   const prompt    = sp.get('q')     ?? ''
   const query     = sp.get('label') ?? ''
 
+  const [fallbackExport, setFallbackExport] = useState<ExportData | null>(null)
+
   // Start the job if the context doesn't already have it (e.g. page refresh)
   useEffect(() => {
     if (!decodedId || !prompt) return
@@ -24,6 +27,24 @@ export default function JobDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [decodedId])
 
+  // Fallback: if pipeline finishes but exportData never arrived, fetch it from the DB
+  useEffect(() => {
+    if (!job?.done || job.exportData || !decodedId) return
+    fetch(`/api/datasets/${decodedId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: Record<string, unknown> | null) => {
+        if (data?.exports && typeof data.exports === 'object') {
+          setFallbackExport({
+            job_id:       data.job_id as string,
+            exports:      data.exports as Record<string, string>,
+            image_count:  data.image_count as number,
+            splits:       data.splits as { train: number; val: number; test: number } | undefined,
+          })
+        }
+      })
+      .catch(() => {})
+  }, [job?.done, job?.exportData, decodedId])
+
   // Auto-scroll chat log
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
@@ -32,6 +53,7 @@ export default function JobDetail() {
   if (!job) return null
 
   const { steps, messages, live, exportData, done, error } = job
+  const effectiveExport = exportData ?? fallbackExport
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
@@ -43,12 +65,12 @@ export default function JobDetail() {
             <p className="text-xs font-bold text-muted-fg uppercase tracking-widest mb-5">Pipeline</p>
             <PipelineStatus steps={steps} />
           </div>
-          {exportData && (
+          {effectiveExport && (
             <ExportPanel
-              jobId={exportData.job_id}
-              exports={exportData.exports}
-              imageCount={exportData.image_count}
-              splits={exportData.splits}
+              jobId={effectiveExport.job_id}
+              exports={effectiveExport.exports}
+              imageCount={effectiveExport.image_count}
+              splits={effectiveExport.splits}
             />
           )}
         </div>
@@ -147,17 +169,17 @@ export default function JobDetail() {
             )}
 
             {/* Download card — shown inline in chat when pipeline completes */}
-            {done && exportData && exportData.job_id && (
+            {done && effectiveExport && effectiveExport.job_id && (
               <div className="animate-fade-in ml-10 mt-1">
                 <div className="glass-sm px-4 py-4">
                   <p className="text-xs font-bold text-muted-fg uppercase tracking-widest mb-3">Download Your Dataset</p>
                   <div className="flex gap-2 flex-wrap">
-                    {Object.entries(exportData.exports)
+                    {Object.entries(effectiveExport.exports)
                       .filter(([, uri]) => uri && !uri.startsWith('error'))
                       .map(([fmt]) => (
                         <a
                           key={fmt}
-                          href={`/api/download/${exportData.job_id}/${fmt}`}
+                          href={`/api/download/${effectiveExport.job_id}/${fmt}`}
                           download
                           className="btn-primary text-xs flex-1 justify-center"
                         >

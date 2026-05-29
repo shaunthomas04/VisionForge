@@ -7,12 +7,17 @@ from google.cloud import storage
 from PIL import Image
 
 
-def search_images(query: str, count: int = 100, min_resolution: int = 300) -> dict:
+_OVERSAMPLE = 2.0   # collect 2× the target to absorb annotation/validation/dedup losses
+_MAX_COLLECT = 600  # hard cap — Unsplash free tier limit
+
+def search_images(query: str, count: int = 50, min_resolution: int = 300) -> dict:
     """Search for and collect images matching a query, uploading them to GCS.
 
     Args:
         query: Natural language search query, e.g. 'gaming mice'.
-        count: Target number of images to collect before validation loss.
+        count: Desired number of images in the FINAL dataset after validation and
+            deduplication. The tool automatically collects 2× this number to absorb
+            losses from annotation failures, validation rejections, and deduplication.
         min_resolution: Minimum pixel dimension (width or height) to accept.
 
     Returns:
@@ -28,11 +33,14 @@ def search_images(query: str, count: int = 100, min_resolution: int = 300) -> di
     gcs_client = storage.Client()
     bucket = gcs_client.bucket(bucket_name)
 
+    # Collect more than requested to account for downstream losses
+    collect_target = min(int(count * _OVERSAMPLE), _MAX_COLLECT)
+
     collected = []
     page = 1
     per_page = 30  # Unsplash max per page
 
-    while len(collected) < count:
+    while len(collected) < collect_target:
         try:
             resp = requests.get(
                 "https://api.unsplash.com/search/photos",
@@ -60,7 +68,7 @@ def search_images(query: str, count: int = 100, min_resolution: int = 300) -> di
             break
 
         for item in results:
-            if len(collected) >= count:
+            if len(collected) >= collect_target:
                 break
             image_url = item.get("urls", {}).get("regular")
             if not image_url:
@@ -97,13 +105,14 @@ def search_images(query: str, count: int = 100, min_resolution: int = 300) -> di
                 continue
 
         page += 1
-        if page > 10:  # cap at 300 images max
+        if page > 20:  # cap at ~600 images max
             break
 
     return {
         "status": "ok",
         "job_id": job_id,
         "query": query,
+        "target_count": count,
         "collected": len(collected),
         "image_ids": [img["image_id"] for img in collected],
         "images": collected,

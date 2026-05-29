@@ -34,8 +34,8 @@ If MongoDB tools are available, call "insert-many" with:
 
 ## STEP 2 — ANNOTATE
 
-For each image, call annotate_image(job_id, image_id, gcs_uri).
-Flatten all returned annotations into a master list (status == "ok" only).
+Call annotate_images(job_id, images) passing the full images list from Step 1.
+Save the returned all_annotations list.
 
 If MongoDB tools are available, call "insert-many" with:
   database: "visionforge"
@@ -45,9 +45,8 @@ If MongoDB tools are available, call "insert-many" with:
 
 ## STEP 3 — VALIDATE
 
-For each annotation call validate_annotation(job_id, annotation_id,
-confidence_threshold, image_id, gcs_uri, class_name, bbox).
-Collect passed == True into validated_annotations.
+Call validate_annotations(job_id, all_annotations, confidence_threshold=0.75).
+Save the returned validated_annotations list.
 
 If MongoDB tools are available, call "insert-many" with:
   database: "visionforge"
@@ -63,7 +62,9 @@ Filter validated_annotations to only keep image_ids in kept_records.
 
 ## STEP 5 — EXPORT
 
-Call export_dataset(job_id, annotations, formats=["yolo","coco"]).
+Extract the target image count from the user's original request (the number they
+asked for). Call export_dataset(job_id, annotations, formats=["yolo","coco"],
+target_count=<that number>) so the final dataset matches what the user requested.
 
 If MongoDB tools are available:
   Call "insert-many" with database "visionforge", collection "datasets",
