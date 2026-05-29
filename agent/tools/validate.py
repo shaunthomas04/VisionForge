@@ -63,7 +63,7 @@ def validate_annotation(
         A dict with passed bool, confidence score, rejection_reason (if any),
         and updated annotation status.
     """
-    model_name = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-002")
 
     if not gcs_uri or not class_name:
         return {
