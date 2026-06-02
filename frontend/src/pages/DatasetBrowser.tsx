@@ -109,7 +109,7 @@ export default function DatasetBrowser() {
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search datasets with AI — try 'dogs' or 'traffic'"
+            placeholder="Search For Datasets..."
             className="w-full pl-11 pr-24 py-3 rounded-xl bg-surface-2 border border-border text-fg placeholder:text-muted-fg
                        focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50
                        transition-all duration-200 text-sm"
@@ -361,6 +361,75 @@ function DatasetDetail({ dataset: ds, onBack }: { dataset: Dataset; onBack: () =
             <p className="text-sm text-muted-fg">No export archives available for this dataset.</p>
           </div>
         )}
+
+        {/* Images */}
+        <DatasetImages jobId={ds.job_id} />
+
+      </div>
+    </div>
+  )
+}
+
+// ── Dataset images grid ────────────────────────────────────────────────────
+
+interface ImageRecord {
+  image_id: string
+  filename?: string
+  gcs_uri?: string   // gs://{bucket}/{gcs_prefix}/{filename}
+}
+
+function DatasetImages({ jobId }: { jobId: string }) {
+  const [images, setImages]   = useState<ImageRecord[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`/api/images/${jobId}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { setImages(Array.isArray(data) ? data : []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [jobId])
+
+  if (loading) {
+    return (
+      <div className="glass p-5">
+        <p className="text-xs font-bold text-muted-fg uppercase tracking-widest mb-4">Images</p>
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="aspect-square rounded-lg bg-surface-2 animate-pulse" />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (images.length === 0) return null
+
+  return (
+    <div className="glass p-5">
+      <p className="text-xs font-bold text-muted-fg uppercase tracking-widest mb-4">
+        Images · {images.length}
+      </p>
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+        {images.map(img => {
+          const filename = img.filename ?? img.gcs_uri?.split('/').pop()
+          // Extract the real GCS prefix from the uri: gs://{bucket}/{prefix}/{filename}
+          const gcsPrefix = img.gcs_uri
+            ? img.gcs_uri.slice('gs://'.length).split('/')[1]
+            : jobId
+          if (!filename) return null
+          return (
+            <div key={img.image_id} className="aspect-square rounded-lg overflow-hidden bg-surface-2">
+              <img
+                src={`/api/image/${gcsPrefix}/${filename}`}
+                alt=""
+                loading="lazy"
+                className="w-full h-full object-cover transition-opacity duration-300"
+                onLoad={e => (e.currentTarget.style.opacity = '1')}
+                style={{ opacity: 0 }}
+              />
+            </div>
+          )
+        })}
       </div>
     </div>
   )
