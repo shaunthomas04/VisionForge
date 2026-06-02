@@ -55,6 +55,8 @@ function withMsg(
   detail?: string,
   variant?: Message['variant'],
 ): JobState {
+  const last = j.messages[j.messages.length - 1]
+  if (last && last.role === role && last.text === text) return j
   return { ...j, messages: [...j.messages, { role, text, detail, variant }] }
 }
 
