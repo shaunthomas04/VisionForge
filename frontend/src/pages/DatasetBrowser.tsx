@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { ArrowLeft, Download, Database, PackageOpen, LayoutGrid, Calendar, Tag, RefreshCw } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ArrowLeft, Download, Database, PackageOpen, LayoutGrid, Calendar, Tag, RefreshCw, Search, X, Sparkles } from 'lucide-react'
 
 interface Dataset {
   job_id: string
@@ -24,10 +24,15 @@ function fmtDate(d?: string) {
 // ── Top-level page ─────────────────────────────────────────────────────────
 
 export default function DatasetBrowser() {
-  const [datasets, setDatasets] = useState<Dataset[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [selected, setSelected] = useState<Dataset | null>(null)
+  const [datasets, setDatasets]       = useState<Dataset[]>([])
+  const [loading, setLoading]         = useState(true)
+  const [error, setError]             = useState<string | null>(null)
+  const [selected, setSelected]       = useState<Dataset | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<Dataset[] | null>(null)
+  const [searching, setSearching]     = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   function load() {
     setLoading(true)
@@ -40,20 +45,42 @@ export default function DatasetBrowser() {
 
   useEffect(() => { load() }, [])
 
+  function handleSearch(e: React.FormEvent) {
+    e.preventDefault()
+    const q = searchQuery.trim()
+    if (!q) return
+    setSearching(true)
+    setSearchError(null)
+    fetch(`/api/search-datasets?q=${encodeURIComponent(q)}`)
+      .then(r => { if (!r.ok) throw new Error(`Search error ${r.status}`); return r.json() })
+      .then(data => { setSearchResults(Array.isArray(data) ? data : []); setSearching(false) })
+      .catch(e => { setSearchError(e.message); setSearching(false) })
+  }
+
+  function clearSearch() {
+    setSearchQuery('')
+    setSearchResults(null)
+    setSearchError(null)
+    inputRef.current?.focus()
+  }
+
   if (selected) {
     return <DatasetDetail dataset={selected} onBack={() => setSelected(null)} />
   }
 
+  const displayed  = searchResults ?? datasets
+  const isFiltered = searchResults !== null
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-fg tracking-tight">Datasets</h1>
           <p className="text-muted-fg text-sm mt-1">Previously built datasets stored in MongoDB Atlas</p>
         </div>
         <div className="flex items-center gap-3">
-          {datasets.length > 0 && (
+          {!isFiltered && datasets.length > 0 && (
             <span className="text-xs font-semibold px-3 py-1.5 rounded-full bg-accent-dim border border-accent/20 text-accent">
               {datasets.length} dataset{datasets.length !== 1 ? 's' : ''}
             </span>
@@ -70,21 +97,88 @@ export default function DatasetBrowser() {
         </div>
       </div>
 
-      {/* States */}
-      {loading && <LoadingSkeleton />}
+      {/* Search bar */}
+      <form onSubmit={handleSearch} className="relative mb-6">
+        <div className="relative flex items-center">
+          {searching
+            ? <span className="absolute left-4 w-4 h-4 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />
+            : <Search className="absolute left-4 w-4 h-4 text-muted-fg pointer-events-none" />
+          }
+          <input
+            ref={inputRef}
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search datasets with AI — try 'dogs' or 'traffic'"
+            className="w-full pl-11 pr-24 py-3 rounded-xl bg-surface-2 border border-border text-fg placeholder:text-muted-fg
+                       focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50
+                       transition-all duration-200 text-sm"
+          />
+          <div className="absolute right-3 flex items-center gap-2">
+            {searchQuery && (
+              <button type="button" onClick={clearSearch}
+                className="w-6 h-6 rounded-full flex items-center justify-center text-muted-fg hover:text-fg hover:bg-surface-2 transition-colors cursor-pointer">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button type="submit" disabled={!searchQuery.trim() || searching}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/15 border border-primary/30
+                         text-primary text-xs font-semibold hover:bg-primary/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+              <Sparkles className="w-3 h-3" />
+              Search
+            </button>
+          </div>
+        </div>
+      </form>
 
-      {error && !loading && (
+      {/* Search result header */}
+      {isFiltered && !searching && (
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm text-muted-fg">
+            <span className="text-fg font-semibold">{searchResults!.length}</span>
+            {' '}result{searchResults!.length !== 1 ? 's' : ''} for{' '}
+            <span className="text-primary font-semibold">"{searchQuery}"</span>
+          </p>
+          <button onClick={clearSearch}
+            className="flex items-center gap-1.5 text-xs text-muted-fg hover:text-fg transition-colors cursor-pointer">
+            <X className="w-3 h-3" />
+            Clear search
+          </button>
+        </div>
+      )}
+
+      {/* States */}
+      {loading && !isFiltered && <LoadingSkeleton />}
+      {searching && <LoadingSkeleton />}
+
+      {error && !loading && !isFiltered && (
         <div className="glass p-8 text-center">
           <p className="text-danger text-sm mb-1">Failed to load datasets: {error}</p>
           <p className="text-muted-fg text-xs">Make sure the backend is running with <code className="bg-surface-2 border border-border px-1.5 py-0.5 rounded">uvicorn main:app --port 8000</code></p>
         </div>
       )}
 
-      {!loading && !error && datasets.length === 0 && <EmptyState />}
+      {searchError && (
+        <div className="glass p-6 text-center">
+          <p className="text-danger text-sm">Search failed: {searchError}</p>
+        </div>
+      )}
 
-      {!loading && !error && datasets.length > 0 && (
+      {!loading && !searching && !error && !searchError && displayed.length === 0 && (
+        isFiltered ? (
+          <div className="glass p-12 text-center">
+            <div className="w-10 h-10 rounded-2xl bg-surface-2 flex items-center justify-center mx-auto mb-3">
+              <Search className="w-5 h-5 text-muted-fg" />
+            </div>
+            <p className="text-sm font-semibold text-fg mb-1">No matching datasets</p>
+            <p className="text-xs text-muted-fg">Try a different search term or <button onClick={clearSearch} className="text-primary underline cursor-pointer">view all datasets</button>.</p>
+          </div>
+        ) : <EmptyState />
+      )}
+
+      {!loading && !searching && !error && !searchError && displayed.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {datasets.map(ds => (
+          {displayed.map(ds => (
             <DatasetCard key={ds.job_id} dataset={ds} onClick={() => setSelected(ds)} />
           ))}
         </div>

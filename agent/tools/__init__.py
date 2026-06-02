@@ -3,6 +3,7 @@ from .annotate import annotate_images
 from .validate import validate_annotations
 from .deduplicate import deduplicate
 from .export import export_dataset
+from .embed import embed_dataset
 
 __all__ = [
     "search_images",
@@ -10,4 +11,5 @@ __all__ = [
     "validate_annotations",
     "deduplicate",
     "export_dataset",
+    "embed_dataset",
 ]

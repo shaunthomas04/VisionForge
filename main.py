@@ -55,7 +55,48 @@ async def list_datasets():
     if db is None:
         return []
     try:
-        docs = list(db["datasets"].find({}).sort("_id", -1))
+        docs = list(db["datasets"].find({}, {"embedding": 0}).sort("_id", -1))
+        for doc in docs:
+            _stamp(doc)
+            job = db["jobs"].find_one({"job_id": doc.get("job_id")}, {"query": 1, "_id": 0})
+            if job:
+                doc["query"] = job.get("query", "Unknown")
+        return docs
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/search-datasets")
+async def search_datasets(q: str):
+    db = _get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="MongoDB not configured")
+    try:
+        from google import genai as _genai
+        client = _genai.Client(
+            vertexai=True,
+            project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
+            location=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"),
+        )
+        result = client.models.embed_content(model="text-embedding-004", contents=q)
+        query_vector = list(result.embeddings[0].values)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {exc}")
+    try:
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": "datasets_vector",
+                    "path": "embedding",
+                    "queryVector": query_vector,
+                    "numCandidates": 100,
+                    "limit": 20,
+                }
+            },
+            {"$addFields": {"score": {"$meta": "vectorSearchScore"}}},
+            {"$project": {"embedding": 0}},
+        ]
+        docs = list(db["datasets"].aggregate(pipeline))
         for doc in docs:
             _stamp(doc)
             job = db["jobs"].find_one({"job_id": doc.get("job_id")}, {"query": 1, "_id": 0})
@@ -72,7 +113,7 @@ async def get_dataset(job_id: str):
     if db is None:
         raise HTTPException(status_code=503, detail="MongoDB not configured")
     try:
-        doc = db["datasets"].find_one({"job_id": job_id})
+        doc = db["datasets"].find_one({"job_id": job_id}, {"embedding": 0})
         if not doc:
             raise HTTPException(status_code=404, detail="Dataset not found")
         _stamp(doc)

@@ -75,6 +75,9 @@ If MongoDB tools are available:
     filter matching the job_id,
     update setting status="completed" and completed_at=now
 
+  Then call embed_dataset(job_id=job_id, query=<the original query string the user provided>)
+  to store a semantic embedding on the dataset document for vector similarity search.
+
 ## GENERAL RULES
 
 - Do NOT output a summary or recap after the export step completes. The UI displays results automatically.

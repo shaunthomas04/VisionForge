@@ -8,6 +8,7 @@ from mcp import StdioServerParameters
 from .tools import (
     annotate_images,
     deduplicate,
+    embed_dataset,
     export_dataset,
     search_images,
     validate_annotations,
@@ -22,6 +23,7 @@ _tools = [
     validate_annotations,
     deduplicate,
     export_dataset,
+    embed_dataset,
 ]
 
 # MongoDB Atlas MCP server.
