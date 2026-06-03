@@ -26,6 +26,20 @@ app = get_fast_api_app(
 # These endpoints are purely for displaying stored datasets in the frontend.
 
 _db = None
+_gemini_client = None
+
+
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        from google import genai
+        _gemini_client = genai.Client(
+            vertexai=True,
+            project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
+            location=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"),
+        )
+    return _gemini_client
+
 
 def _get_db():
     global _db
@@ -72,13 +86,7 @@ async def search_datasets(q: str):
     if db is None:
         raise HTTPException(status_code=503, detail="MongoDB not configured")
     try:
-        from google import genai as _genai
-        client = _genai.Client(
-            vertexai=True,
-            project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
-            location=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"),
-        )
-        result = client.models.embed_content(model="text-embedding-004", contents=q)
+        result = _get_gemini_client().models.embed_content(model="text-embedding-004", contents=q)
         query_vector = list(result.embeddings[0].values)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Embedding failed: {exc}")
@@ -223,7 +231,7 @@ async def list_images(job_id: str):
         return result
 
     try:
-        images = await asyncio.get_event_loop().run_in_executor(None, _list)
+        images = await asyncio.get_running_loop().run_in_executor(None, _list)
         return images
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -247,7 +255,7 @@ async def proxy_image(job_id: str, filename: str):
         return gcs_lib.Client().bucket(bucket).blob(blob_path).download_as_bytes()
 
     try:
-        data = await asyncio.get_event_loop().run_in_executor(None, _fetch)
+        data = await asyncio.get_running_loop().run_in_executor(None, _fetch)
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -282,7 +290,7 @@ async def download_export(job_id: str, fmt: str):
     def _fetch():
         return gcs_lib.Client().bucket(bucket_name).blob(blob_path).download_as_bytes()
 
-    data = await asyncio.get_event_loop().run_in_executor(None, _fetch)
+    data = await asyncio.get_running_loop().run_in_executor(None, _fetch)
 
     slug = "dataset"
     job = db["jobs"].find_one({"job_id": job_id}, {"query": 1, "_id": 0})

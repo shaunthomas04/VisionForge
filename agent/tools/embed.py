@@ -3,6 +3,19 @@ import os
 from google import genai
 
 _gemini_client: genai.Client | None = None
+_mongo_db = None
+
+
+def _get_db():
+    global _mongo_db
+    if _mongo_db is None:
+        import os as _os
+        from pymongo import MongoClient
+        uri = _os.environ.get("MONGODB_URI")
+        if not uri:
+            return None
+        _mongo_db = MongoClient(uri, serverSelectionTimeoutMS=4000)["visionforge"]
+    return _mongo_db
 
 
 def _get_gemini_client() -> genai.Client:
@@ -41,11 +54,9 @@ def embed_dataset(job_id: str, query: str) -> dict:
         return {"status": "error", "job_id": job_id, "message": f"Embedding failed: {e}"}
 
     try:
-        uri = os.environ.get("MONGODB_URI")
-        if not uri:
+        db = _get_db()
+        if db is None:
             return {"status": "error", "job_id": job_id, "message": "MONGODB_URI not set"}
-        from pymongo import MongoClient
-        db = MongoClient(uri, serverSelectionTimeoutMS=4000)["visionforge"]
         db["datasets"].update_one(
             {"job_id": job_id},
             {"$set": {"embedding": embedding}},
