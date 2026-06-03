@@ -218,7 +218,7 @@ def export_dataset(
         "status": "ok",
         "job_id": job_id,
         "version": version,
-        "image_count": len(annotations),
+        "image_count": len(image_ids),
         "image_ids": image_ids,
         "class_counts": class_counts,
         "splits": {"train": len(train), "val": len(val), "test": len(test)},

@@ -3,6 +3,7 @@ import { ArrowLeft, Download, Database, PackageOpen, LayoutGrid, Calendar, Tag, 
 
 interface Dataset {
   job_id: string
+  name?: string
   query?: string
   version?: number
   image_count?: number
@@ -201,15 +202,23 @@ function DatasetCard({ dataset: ds, onClick }: { dataset: Dataset; onClick: () =
       style={{ '--tw-shadow': '0 0 0 0 transparent' } as React.CSSProperties}
     >
       {/* Title row */}
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <h3 className="text-sm font-semibold text-fg leading-snug capitalize group-hover:text-primary transition-colors"
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <h3 className="text-sm font-semibold text-fg leading-snug group-hover:text-primary transition-colors"
             style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-          {ds.query ?? 'Unnamed dataset'}
+          {ds.name ?? ds.query ?? 'Unnamed dataset'}
         </h3>
         <span className="text-xs font-medium text-accent bg-accent-dim px-2 py-0.5 rounded-full border border-accent/15 flex-shrink-0 whitespace-nowrap">
           v{ds.version ?? 1}
         </span>
       </div>
+
+      {/* Subject tag — shown when name differs from query */}
+      {ds.name && ds.query && (
+        <p className="text-xs text-muted-fg capitalize mb-2 truncate">
+          <Tag className="w-3 h-3 inline mr-1 -mt-px" />
+          {ds.query}
+        </p>
+      )}
 
       {/* Stats */}
       <div className="flex items-center gap-4 mb-3">
@@ -267,9 +276,14 @@ function DatasetDetail({ dataset: ds, onBack }: { dataset: Dataset; onBack: () =
       {/* Page header */}
       <div className="flex items-start justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-fg tracking-tight capitalize">
-            {ds.query ?? 'Unnamed dataset'}
+          <h1 className="text-2xl font-bold text-fg tracking-tight">
+            {ds.name ?? ds.query ?? 'Unnamed dataset'}
           </h1>
+          {ds.name && ds.query && (
+            <p className="text-xs text-muted-fg capitalize mt-0.5 flex items-center gap-1">
+              <Tag className="w-3 h-3" />{ds.query}
+            </p>
+          )}
           <p className="text-muted-fg text-sm mt-1">
             v{ds.version ?? 1} · {ds.image_count ?? 0} images · {fmtDate(ds.created_at)}
           </p>

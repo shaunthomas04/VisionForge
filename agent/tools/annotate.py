@@ -5,12 +5,17 @@ import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from PIL import Image
 from google.cloud import storage
 from google import genai
 from google.genai import types
 
 
-_ANNOTATION_PROMPT = """Analyze this image and identify ALL distinct object instances that could be useful in a computer vision dataset.
+def _annotation_prompt(width: int, height: int) -> str:
+    return f"""Analyze this image and identify ALL distinct object instances that could be useful in a computer vision dataset.
+
+The image is exactly {width}×{height} pixels. All bbox coordinates must use this pixel space:
+  x ranges from 0 to {width}, y ranges from 0 to {height}.
 
 Return ONLY a JSON array — no explanation, no markdown:
 [
@@ -24,7 +29,8 @@ Return ONLY a JSON array — no explanation, no markdown:
 
 Rules:
 - Include every clearly visible instance, even if multiple of the same class appear.
-- Each bbox must be tight around that specific instance, in pixel coordinates relative to the full image.
+- Each bbox must be tight around that specific instance.
+- x + w must not exceed {width}. y + h must not exceed {height}.
 - Only include objects with confidence >= 0.5.
 - If no clear objects are present, return an empty array: []"""
 
@@ -72,6 +78,8 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
         bucket_name = gcs_uri[len("gs://"):].split("/")[0]
         blob_path = "/".join(gcs_uri[len("gs://"):].split("/")[1:])
         img_bytes = gcs.bucket(bucket_name).blob(blob_path).download_as_bytes()
+        img = Image.open(io.BytesIO(img_bytes))
+        width, height = img.size
     except Exception as e:
         return {
             "status": "error",
@@ -87,7 +95,7 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
             model=model_name,
             contents=[
                 types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
-                _ANNOTATION_PROMPT,
+                _annotation_prompt(width, height),
             ],
         )
         text = response.text.strip()
