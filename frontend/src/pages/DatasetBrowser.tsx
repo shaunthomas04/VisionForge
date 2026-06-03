@@ -370,12 +370,90 @@ function DatasetDetail({ dataset: ds, onBack }: { dataset: Dataset; onBack: () =
   )
 }
 
+// ── Annotated image with bbox overlay ─────────────────────────────────────
+
+function AnnotatedImage({ src, annotations }: { src: string; annotations: BboxAnnotation[] }) {
+  const [nat, setNat] = useState<{ w: number; h: number } | null>(null)
+
+  const validAnns = annotations.filter(a => a.bbox && a.bbox.w > 0 && a.bbox.h > 0)
+
+  // stroke + font scale relative to the original image size so they look
+  // consistent regardless of how small the thumbnail is rendered
+  const strokeW  = nat ? Math.max(nat.w, nat.h) * 0.004 : 2
+  const fontSize  = nat ? Math.max(nat.w, nat.h) * 0.038 : 14
+  const padX      = nat ? Math.max(nat.w, nat.h) * 0.006 : 3
+  const padY      = nat ? Math.max(nat.w, nat.h) * 0.003 : 2
+
+  return (
+    <div className="aspect-square rounded-lg overflow-hidden bg-surface-2 relative">
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        className="w-full h-full object-cover transition-opacity duration-300"
+        style={{ opacity: 0 }}
+        onLoad={e => {
+          e.currentTarget.style.opacity = '1'
+          setNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
+        }}
+      />
+
+      {/* SVG overlay — viewBox matches original image dims, preserveAspectRatio
+          mirrors object-cover so coordinates align at every thumbnail size */}
+      {nat && validAnns.length > 0 && (
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          viewBox={`0 0 ${nat.w} ${nat.h}`}
+          preserveAspectRatio="xMidYMid slice"
+        >
+          {validAnns.map((ann, i) => {
+            const { x, y, w, h } = ann.bbox!
+            const label = ann.class_name.replace(/_/g, ' ')
+            const labelW = label.length * fontSize * 0.6 + padX * 2
+            const labelH = fontSize + padY * 2
+            const labelY = y - labelH > 0 ? y - labelH : y + h
+            return (
+              <g key={i}>
+                <rect x={x} y={y} width={w} height={h}
+                  fill="rgba(99,102,241,0.08)"
+                  stroke="#6366F1"
+                  strokeWidth={strokeW}
+                  rx={strokeW * 1.5}
+                />
+                <rect x={x} y={labelY} width={labelW} height={labelH}
+                  fill="#6366F1" rx={strokeW} />
+                <text
+                  x={x + padX}
+                  y={labelY + labelH - padY}
+                  fontSize={fontSize}
+                  fill="white"
+                  fontFamily="ui-sans-serif,system-ui,sans-serif"
+                  fontWeight="600"
+                >
+                  {label}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      )}
+    </div>
+  )
+}
+
 // ── Dataset images grid ────────────────────────────────────────────────────
+
+interface BboxAnnotation {
+  class_name: string
+  bbox: { x: number; y: number; w: number; h: number } | null
+  confidence: number
+}
 
 interface ImageRecord {
   image_id: string
   filename?: string
-  gcs_uri?: string   // gs://{bucket}/{gcs_prefix}/{filename}
+  gcs_uri?: string
+  annotations?: BboxAnnotation[]
 }
 
 function DatasetImages({ jobId }: { jobId: string }) {
@@ -412,22 +490,16 @@ function DatasetImages({ jobId }: { jobId: string }) {
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
         {images.map(img => {
           const filename = img.filename ?? img.gcs_uri?.split('/').pop()
-          // Extract the real GCS prefix from the uri: gs://{bucket}/{prefix}/{filename}
           const gcsPrefix = img.gcs_uri
             ? img.gcs_uri.slice('gs://'.length).split('/')[1]
             : jobId
           if (!filename) return null
           return (
-            <div key={img.image_id} className="aspect-square rounded-lg overflow-hidden bg-surface-2">
-              <img
-                src={`/api/image/${gcsPrefix}/${filename}`}
-                alt=""
-                loading="lazy"
-                className="w-full h-full object-cover transition-opacity duration-300"
-                onLoad={e => (e.currentTarget.style.opacity = '1')}
-                style={{ opacity: 0 }}
-              />
-            </div>
+            <AnnotatedImage
+              key={img.image_id}
+              src={`/api/image/${gcsPrefix}/${filename}`}
+              annotations={img.annotations ?? []}
+            />
           )
         })}
       </div>

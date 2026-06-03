@@ -155,21 +155,72 @@ async def list_images(job_id: str):
         except Exception:
             pass
 
+    # Resolve the validated image_id set. Priority:
+    #   1. image_ids stored on the datasets document (written by export_dataset — always correct)
+    #   2. annotations collection (written by agent — sometimes incomplete)
+    #   3. No filter — show all collected GCS images as fallback
+    validated_ids: set | None = None
+    if db is not None:
+        try:
+            doc = db["datasets"].find_one({"job_id": job_id}, {"image_ids": 1, "_id": 0})
+            ids = (doc or {}).get("image_ids")
+            if ids:
+                validated_ids = set(ids)
+        except Exception:
+            pass
+
+    if validated_ids is None and db is not None:
+        try:
+            anns = list(db["annotations"].find(
+                {"job_id": gcs_prefix},
+                {"image_id": 1, "_id": 0},
+            ))
+            if anns:
+                validated_ids = {a["image_id"] for a in anns}
+        except Exception:
+            pass
+
+    # Fetch annotations grouped by image_id for bbox overlay
+    ann_by_image: dict = {}
+    if db is not None:
+        try:
+            anns = list(db["annotations"].find(
+                {"job_id": gcs_prefix},
+                {"image_id": 1, "class_name": 1, "bbox": 1, "confidence": 1, "_id": 0},
+            ))
+            for ann in anns:
+                iid = ann.get("image_id", "")
+                if not iid:
+                    continue
+                ann_by_image.setdefault(iid, []).append({
+                    "class_name": ann.get("class_name", ""),
+                    "bbox":       ann.get("bbox"),
+                    "confidence": ann.get("confidence", 0),
+                })
+        except Exception:
+            pass
+
     import asyncio
     from google.cloud import storage as gcs_lib
 
     def _list():
         client = gcs_lib.Client()
         blobs = client.bucket(bucket_name).list_blobs(prefix=f"{gcs_prefix}/")
-        return [
-            {
-                "image_id": b.name.split("/")[-1].rsplit(".", 1)[0],
-                "filename":  b.name.split("/")[-1],
-                "gcs_uri":   f"gs://{bucket_name}/{b.name}",
-            }
-            for b in blobs
-            if b.name.split("/")[-1]
-        ]
+        result = []
+        for b in blobs:
+            fname = b.name.split("/")[-1]
+            if not fname:
+                continue
+            image_id = fname.rsplit(".", 1)[0]
+            if validated_ids is not None and image_id not in validated_ids:
+                continue
+            result.append({
+                "image_id":    image_id,
+                "filename":    fname,
+                "gcs_uri":     f"gs://{bucket_name}/{b.name}",
+                "annotations": ann_by_image.get(image_id, []),
+            })
+        return result
 
     try:
         images = await asyncio.get_event_loop().run_in_executor(None, _list)

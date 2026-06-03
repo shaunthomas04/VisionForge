@@ -69,7 +69,7 @@ target_count=<that number>) so the final dataset matches what the user requested
 If MongoDB tools are available:
   Call "insert-many" with database "visionforge", collection "datasets",
     documents: array containing one object with fields:
-    job_id, version=1, image_count, class_counts, splits, exports, created_at=now
+    job_id, version=1, image_count, image_ids, class_counts, splits, exports, created_at=now
 
   Call "update-many" with database "visionforge", collection "jobs",
     filter matching the job_id,

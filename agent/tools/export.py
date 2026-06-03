@@ -212,11 +212,14 @@ def export_dataset(
         cn = ann.get("class_name", "object")
         class_counts[cn] = class_counts.get(cn, 0) + 1
 
+    image_ids = list({ann.get("image_id") for ann in annotations if ann.get("image_id")})
+
     return {
         "status": "ok",
         "job_id": job_id,
         "version": version,
         "image_count": len(annotations),
+        "image_ids": image_ids,
         "class_counts": class_counts,
         "splits": {"train": len(train), "val": len(val), "test": len(test)},
         "exports": exports,
