@@ -4,9 +4,12 @@ import math
 import os
 import uuid
 import zipfile
+from datetime import datetime
 
 import requests
 from google.cloud import storage
+
+from .cache import _validated_annotations
 
 
 _gcs_client: storage.Client | None = None
@@ -141,39 +144,55 @@ def _build_coco_zip(annotations: list, class_names: list) -> bytes:
 
 def export_dataset(
     job_id: str,
-    annotations: list | None = None,
     formats: list[str] | None = None,
     target_count: int | None = None,
+    query: str = "",
+    kept_image_ids: list[str] | None = None,
 ) -> dict:
     """Export the validated dataset as YOLO and/or COCO format zip archives in GCS.
 
+    Reads validated annotations from the in-process cache written by validate_annotations —
+    no need to pass the annotation list through the model context.
+
     Args:
-        job_id: The pipeline job to export.
-        annotations: List of validated annotation dicts from validate_annotations,
-            each containing image_id, gcs_uri, class_name, bbox (x/y/w/h pixels),
-            width, height, confidence.
+        job_id: The pipeline job to export (must match prior pipeline steps).
         formats: List of export formats. Supported: 'yolo', 'coco'. Defaults to both.
         target_count: If set, keep only the top N annotations by confidence so the
             final dataset matches the user's requested size exactly.
+        query: The original search query, used to generate the dataset name.
+        kept_image_ids: Optional list of image_ids from deduplicate to filter out duplicates.
 
     Returns:
-        A dict with image_count, class_counts, split sizes, and GCS URIs for each format.
+        A dict with name, image_count, class_counts, split sizes, and GCS URIs for each format.
     """
     if formats is None:
         formats = ["yolo", "coco"]
-    # Normalize: agent may pass the full validate_annotations response dict instead of the list
-    if isinstance(annotations, dict):
-        annotations = (
-            annotations.get("validated_annotations")
-            or annotations.get("annotations")
-            or []
-        )
+
+    annotations = _validated_annotations.get(job_id, [])
     if not annotations:
         return {
             "status": "error",
             "job_id": job_id,
-            "message": "No annotations provided. Pass the validated annotation list from previous steps.",
+            "message": "No validated annotations in cache for this job_id. Ensure validate_annotations ran first.",
         }
+
+    # Filter to deduplicated images if provided
+    if kept_image_ids:
+        kept_set = set(kept_image_ids)
+        annotations = [a for a in annotations if a.get("image_id") in kept_set]
+
+    # Generate name from query + short hash of job_id (first segment of UUID).
+    # Uses server-side data so the model can never hallucinate a wrong date/name.
+    title = " ".join(w.capitalize() for w in query.split()) if query else "Dataset"
+    hash_id = job_id.split("-")[0]  # e.g. "af62568f"
+    dataset_name = f"{title} Items:{hash_id}"
+
+    # Compute class_counts from ALL validated annotations before any cap,
+    # so the UI class list matches the full gallery contents.
+    class_counts = {}
+    for ann in annotations:
+        cn = ann.get("class_name", "object")
+        class_counts[cn] = class_counts.get(cn, 0) + 1
 
     # Cap to target_count, keeping highest-confidence annotations
     if target_count and len(annotations) > target_count:
@@ -207,16 +226,12 @@ def export_dataset(
         except Exception as e:
             exports[fmt] = f"error: {e}"
 
-    class_counts = {}
-    for ann in annotations:
-        cn = ann.get("class_name", "object")
-        class_counts[cn] = class_counts.get(cn, 0) + 1
-
     image_ids = list({ann.get("image_id") for ann in annotations if ann.get("image_id")})
 
     return {
         "status": "ok",
         "job_id": job_id,
+        "name": dataset_name,
         "version": version,
         "image_count": len(image_ids),
         "image_ids": image_ids,

@@ -154,17 +154,15 @@ export function JobProvider({ children }: { children: ReactNode }) {
           }))
 
         } else if (name === 'annotate_images') {
-          const n = (fc.args?.images as unknown[])?.length ?? 0
           scheduleUpdate(j => ({
             ...withTransition(j, 1),
-            live: { label: `Annotating ${n} images in parallel`, current: 0, total: 0 },
+            live: { label: 'Annotating images', current: 0, total: 0 },
           }))
 
         } else if (name === 'validate_annotations') {
-          const n = (fc.args?.annotations as unknown[])?.length ?? 0
           scheduleUpdate(j => ({
             ...withTransition(j, 2),
-            live: { label: `Validating ${n} annotations in parallel`, current: 0, total: 0 },
+            live: { label: 'Validating annotations', current: 0, total: 0 },
           }))
 
         } else if (name === 'deduplicate') {
@@ -196,12 +194,11 @@ export function JobProvider({ children }: { children: ReactNode }) {
               steps: j.steps.map((s, i) => (i === idx ? { ...s, status: 'error' } : s)),
             }))
           } else {
-            const collected = r.collected as number
             scheduleUpdate(j =>
               withMsg(
-                withStep({ ...j, live: null }, idx, 'done', `${collected} collected`),
+                withStep({ ...j, live: null }, idx, 'done', 'collected'),
                 'agent',
-                `Found ${collected} images and uploaded them to GCS.`,
+                'Images collected and uploaded to GCS.',
               )
             )
           }
@@ -214,14 +211,11 @@ export function JobProvider({ children }: { children: ReactNode }) {
               steps: j.steps.map((s, i) => (i === idx ? { ...s, status: 'error' } : s)),
             }))
           } else {
-            const processed = r.processed as number
-            const annCount  = r.annotation_count as number
-            const skipped   = r.skipped as number
             scheduleUpdate(j =>
               withMsg(
-                withStep({ ...j, live: null }, idx, 'done', `${annCount} objects found`),
+                withStep({ ...j, live: null }, idx, 'done', 'annotated'),
                 'agent',
-                `Annotated ${processed} images — ${annCount} objects detected${skipped > 0 ? `, ${skipped} skipped` : ''}.`,
+                'All images annotated.',
               )
             )
           }
@@ -234,14 +228,14 @@ export function JobProvider({ children }: { children: ReactNode }) {
               steps: j.steps.map((s, i) => (i === idx ? { ...s, status: 'error' } : s)),
             }))
           } else {
-            const passed   = r.passed as number
-            const total    = r.total as number
             const rejected = r.rejected as number
             scheduleUpdate(j =>
               withMsg(
-                withStep({ ...j, live: null }, idx, 'done', `${passed} passed`),
+                withStep({ ...j, live: null }, idx, 'done', 'validated'),
                 'agent',
-                `Validation complete — ${passed} of ${total} passed${rejected > 0 ? `, ${rejected} rejected` : ''}.`,
+                rejected > 0
+                  ? `Validation complete — ${rejected} low-confidence annotation${rejected > 1 ? 's' : ''} removed.`
+                  : 'Validation complete — all annotations passed.',
               )
             )
           }
@@ -254,15 +248,14 @@ export function JobProvider({ children }: { children: ReactNode }) {
               steps: j.steps.map((s, i) => (i === idx ? { ...s, status: 'error' } : s)),
             }))
           } else {
-            const kept    = r.kept as number
             const removed = r.removed as number
             scheduleUpdate(j =>
               withMsg(
-                withStep({ ...j, live: null }, idx, 'done', `${kept} unique`),
+                withStep({ ...j, live: null }, idx, 'done', 'deduplicated'),
                 'agent',
                 removed > 0
-                  ? `Removed ${removed} near-duplicate${removed > 1 ? 's' : ''}. ${kept} unique images remain.`
-                  : `No duplicates found — all ${kept} images are unique.`,
+                  ? `Removed ${removed} near-duplicate${removed > 1 ? 's' : ''}.`
+                  : 'No duplicates found.',
               )
             )
           }

@@ -231,7 +231,7 @@ async def list_images(job_id: str):
         return result
 
     try:
-        images = await asyncio.get_running_loop().run_in_executor(None, _list)
+        images = await asyncio.get_event_loop().run_in_executor(None, _list)
         return images
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -255,7 +255,7 @@ async def proxy_image(job_id: str, filename: str):
         return gcs_lib.Client().bucket(bucket).blob(blob_path).download_as_bytes()
 
     try:
-        data = await asyncio.get_running_loop().run_in_executor(None, _fetch)
+        data = await asyncio.get_event_loop().run_in_executor(None, _fetch)
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -290,7 +290,7 @@ async def download_export(job_id: str, fmt: str):
     def _fetch():
         return gcs_lib.Client().bucket(bucket_name).blob(blob_path).download_as_bytes()
 
-    data = await asyncio.get_running_loop().run_in_executor(None, _fetch)
+    data = await asyncio.get_event_loop().run_in_executor(None, _fetch)
 
     slug = "dataset"
     job = db["jobs"].find_one({"job_id": job_id}, {"query": 1, "_id": 0})

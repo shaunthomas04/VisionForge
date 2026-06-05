@@ -94,6 +94,5 @@ def deduplicate(
         "job_id": job_id,
         "kept": len(kept),
         "removed": len(removed_ids),
-        "removed_ids": removed_ids,
-        "kept_records": kept,
+        "kept_image_ids": [r.get("image_id", "") for r in kept],
     }

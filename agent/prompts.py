@@ -35,43 +35,31 @@ If MongoDB tools are available, call "insert-many" with:
 ## STEP 2 — ANNOTATE
 
 Call annotate_images(job_id, images) passing the full images list from Step 1.
-Save the returned all_annotations list.
-
-If MongoDB tools are available, call "insert-many" with:
-  database: "visionforge"
-  collection: "images"
-  documents: array of objects each containing:
-    image_id, job_id, gcs_uri, width, height, status="annotated"
+Annotations are cached internally — do NOT save or pass the annotations list.
 
 ## STEP 3 — VALIDATE
 
-Call validate_annotations(job_id, all_annotations, confidence_threshold=0.75).
-Save the returned validated_annotations list.
-
-If MongoDB tools are available, call "insert-many" with:
-  database: "visionforge"
-  collection: "annotations"
-  documents: array of objects each containing:
-    annotation_id, image_id, job_id, class_name, bbox,
-    confidence, validated=true
+Call validate_annotations(job_id, confidence_threshold=0.75).
+Do NOT pass an annotations argument — the tool reads from cache automatically.
+Validated annotations are cached internally.
 
 ## STEP 4 — DEDUPLICATE
 
 Call deduplicate(job_id, image_records) using the images list from Step 1.
-Filter validated_annotations to only keep image_ids in kept_records.
+Save the returned kept_image_ids list (small list of IDs).
 
 ## STEP 5 — EXPORT
 
 Extract the target image count from the user's original request (the number they
-asked for). Call export_dataset(job_id, annotations, formats=["yolo","coco"],
-target_count=<that number>) so the final dataset matches what the user requested.
+asked for). Call export_dataset(job_id, formats=["yolo","coco"],
+target_count=<that number>, query=<the original search query string>,
+kept_image_ids=<kept_image_ids from Step 4>).
 
 If MongoDB tools are available:
   Call "insert-many" with database "visionforge", collection "datasets",
     documents: array containing one object with fields:
-    job_id, name (a short human-readable title for this specific run, e.g. "Gaming Mice — May 2026"
-    or "Traffic Cones Collection · Jun 2026" — must be unique enough to distinguish from other
-    runs of the same query), query (the original search query string), version=1, image_count,
+    job_id, name (use the name field returned by export_dataset — do NOT invent your own),
+    query (the original search query string), version=1, image_count,
     image_ids, class_counts, splits, exports, created_at=now
 
   Call "update-many" with database "visionforge", collection "jobs",
@@ -84,6 +72,7 @@ If MongoDB tools are available:
 ## GENERAL RULES
 
 - Do NOT output a summary or recap after the export step completes. The UI displays results automatically.
+- Do NOT mention specific image counts during collection, annotation, or validation steps. The UI tracks progress automatically. Only mention the final dataset size after export.
 - If a step fails, report the error and ask whether to retry or skip.
 - Confirm before collecting more than 500 images.
 - Always specify database "visionforge" in every MongoDB tool call.

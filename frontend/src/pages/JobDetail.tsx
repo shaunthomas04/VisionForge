@@ -27,22 +27,33 @@ export default function JobDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [decodedId])
 
-  // Fallback: if pipeline finishes but exportData never arrived, fetch it from the DB
+  // Fallback: if pipeline finishes but exportData never arrived, poll the DB a few times.
+  // The SSE stream can close before the agent finishes writing to MongoDB, so retry.
   useEffect(() => {
     if (!job?.done || job.exportData || !decodedId) return
-    fetch(`/api/datasets/${decodedId}`)
-      .then(r => r.ok ? r.json() : null)
-      .then((data: Record<string, unknown> | null) => {
-        if (data?.exports && typeof data.exports === 'object') {
-          setFallbackExport({
-            job_id:       data.job_id as string,
-            exports:      data.exports as Record<string, string>,
-            image_count:  data.image_count as number,
-            splits:       data.splits as { train: number; val: number; test: number } | undefined,
-          })
+    let cancelled = false
+    async function poll(attemptsLeft: number) {
+      if (cancelled || attemptsLeft <= 0) return
+      try {
+        const r = await fetch(`/api/datasets/${decodedId}`)
+        if (r.ok) {
+          const data: Record<string, unknown> = await r.json()
+          if (data?.exports && typeof data.exports === 'object') {
+            if (!cancelled) setFallbackExport({
+              job_id:      data.job_id as string,
+              exports:     data.exports as Record<string, string>,
+              image_count: data.image_count as number,
+              splits:      data.splits as { train: number; val: number; test: number } | undefined,
+            })
+            return
+          }
         }
-      })
-      .catch(() => {})
+      } catch { /* ignore */ }
+      // Not ready yet — retry after 3 s
+      setTimeout(() => poll(attemptsLeft - 1), 3000)
+    }
+    poll(5)
+    return () => { cancelled = true }
   }, [job?.done, job?.exportData, decodedId])
 
   // Auto-scroll chat log
@@ -54,6 +65,13 @@ export default function JobDetail() {
 
   const { steps, messages, live, exportData, done, error } = job
   const effectiveExport = exportData ?? fallbackExport
+
+  const TOTAL_STEPS = 5
+  const runningIdx  = steps.findIndex(s => s.status === 'running')
+  const stepNum     = runningIdx >= 0 ? runningIdx + 1 : steps.filter(s => s.status === 'done').length
+  const ringR       = 12
+  const ringCirc    = 2 * Math.PI * ringR
+  const ringOffset  = ringCirc * (1 - stepNum / TOTAL_STEPS)
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
@@ -134,8 +152,23 @@ export default function JobDetail() {
             {/* Live progress bubble */}
             {live && (
               <div className="animate-fade-in flex items-start gap-3">
-                <div className="w-7 h-7 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <span className="w-3 h-3 border-2 border-primary/40 border-t-primary rounded-full animate-spin block" />
+                <div className="w-8 h-8 flex items-center justify-center flex-shrink-0 mt-0.5 relative">
+                  <svg width="32" height="32" viewBox="0 0 32 32" style={{ transform: 'rotate(-90deg)', position: 'absolute', top: 0, left: 0 }}>
+                    <circle cx="16" cy="16" r={ringR} stroke="rgba(99,102,241,0.2)" strokeWidth="2.5" fill="none" />
+                    <circle
+                      cx="16" cy="16" r={ringR}
+                      stroke="rgb(99,102,241)"
+                      strokeWidth="2.5"
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeDasharray={ringCirc}
+                      strokeDashoffset={ringOffset}
+                      style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+                    />
+                  </svg>
+                  <span style={{ fontSize: '8px', fontWeight: 700, color: 'rgb(99,102,241)', lineHeight: 1, position: 'relative', zIndex: 1 }}>
+                    {stepNum}/{TOTAL_STEPS}
+                  </span>
                 </div>
                 <div className="glass-sm px-4 py-3 flex-1">
                   <div className="flex items-center gap-2.5">

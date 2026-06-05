@@ -49,33 +49,6 @@ Type a plain-English request like *"build a dataset of gaming mice"* and VisionF
 
 ---
 
-## Architecture
-
-```
-Browser (React SPA)
-    │
-    │  SSE stream  /run_sse
-    ▼
-ADK FastAPI  ──  google-adk (Google Cloud Agent Builder)
-    │
-    ▼
-Gemini Vision  (Vertex AI · gemini-3.1-flash-lite)
-    │
-    ├── search_images        →  Unsplash API  →  GCS visionforge-raw/
-    ├── annotate_images      →  Gemini Vision, 10 parallel workers
-    ├── validate_annotations →  Gemini Vision crop check, 10 parallel workers
-    ├── deduplicate          →  pHash (imagehash)
-    ├── export_dataset       →  YOLO + COCO zips  →  GCS visionforge-exports/
-    ├── embed_dataset        →  text-embedding-004  →  MongoDB vector field
-    └── McpToolset ──────────→  MongoDB Atlas MCP Server
-                                      ├── jobs
-                                      ├── images
-                                      ├── annotations
-                                      └── datasets  (+ Atlas Vector Search index)
-```
-
----
-
 ## Requirements
 
 - **Python 3.11+**
@@ -186,6 +159,33 @@ adk deploy cloud_run agent \
 ```
 
 > For Cloud Run deployments, set `MONGODB_MCP_SERVER_URL` to the SSE URL of a deployed MongoDB Atlas MCP sidecar. The agent will connect over SSE instead of spawning the MCP server locally via `npx`.
+
+---
+
+## Architecture
+
+```
+Browser (React SPA)
+    │
+    │  SSE stream  /run_sse
+    ▼
+ADK FastAPI  ──  google-adk (Google Cloud Agent Builder)
+    │
+    ▼
+Gemini Vision  (Vertex AI · gemini-3.1-flash-lite)
+    │
+    ├── search_images        →  Unsplash API  →  GCS visionforge-raw/
+    ├── annotate_images      →  Gemini Vision, 10 parallel workers
+    ├── validate_annotations →  Gemini Vision crop check, 10 parallel workers
+    ├── deduplicate          →  pHash (imagehash)
+    ├── export_dataset       →  YOLO + COCO zips  →  GCS visionforge-exports/
+    ├── embed_dataset        →  text-embedding-004  →  MongoDB vector field
+    └── McpToolset ──────────→  MongoDB Atlas MCP Server
+                                      ├── jobs
+                                      ├── images
+                                      ├── annotations
+                                      └── datasets  (+ Atlas Vector Search index)
+```
 
 ---
 

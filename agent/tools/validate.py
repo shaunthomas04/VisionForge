@@ -4,6 +4,21 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 
+from .cache import _raw_annotations, _validated_annotations
+
+_mongo_db = None
+
+
+def _get_db():
+    global _mongo_db
+    if _mongo_db is None:
+        from pymongo import MongoClient
+        uri = os.environ.get("MONGODB_URI")
+        if not uri:
+            return None
+        _mongo_db = MongoClient(uri, serverSelectionTimeoutMS=4000)["visionforge"]
+    return _mongo_db
+
 from google.cloud import storage
 from google import genai
 from google.genai import types
@@ -189,20 +204,29 @@ def validate_annotation(
 
 def validate_annotations(
     job_id: str,
-    annotations: list,
     confidence_threshold: float = 0.75,
 ) -> dict:
-    """Validate a batch of annotations in parallel using a second Gemini pass.
+    """Validate annotations cached from annotate_images using a second Gemini pass.
+
+    Reads annotations from the in-process cache written by annotate_images — no need
+    to pass the annotation list through the model context.
 
     Args:
-        job_id: The pipeline job this batch belongs to.
-        annotations: List of annotation dicts from annotate_images, each containing
-            annotation_id, image_id, gcs_uri, class_name, and bbox.
+        job_id: The pipeline job to validate (must match the annotate_images call).
         confidence_threshold: Minimum confidence score to accept (0.0-1.0).
 
     Returns:
-        A dict with validated_annotations (passed only), passed count, and rejected count.
+        A dict with passed count and rejected count. Validated annotations are cached
+        internally and read automatically by export_dataset.
     """
+    annotations = _raw_annotations.get(job_id, [])
+    if not annotations:
+        return {
+            "status": "error",
+            "job_id": job_id,
+            "message": "No annotations found in cache for this job_id. Ensure annotate_images ran first.",
+        }
+
     def _one(ann: dict) -> dict:
         return validate_annotation(
             job_id=job_id,
@@ -225,11 +249,35 @@ def validate_annotations(
             else:
                 rejected += 1
 
+    # Store in process-level cache so export_dataset can read without model passing the list.
+    _validated_annotations[job_id] = validated
+
+    # Write annotation records to MongoDB directly so the agent doesn't have to
+    # generate a large insert-many payload.
+    try:
+        db = _get_db()
+        if db is not None and validated:
+            ann_docs = [
+                {
+                    "annotation_id": a.get("annotation_id", ""),
+                    "image_id":      a.get("image_id", ""),
+                    "job_id":        job_id,
+                    "class_name":    a.get("class_name", ""),
+                    "bbox":          a.get("bbox"),
+                    "confidence":    a.get("confidence", 0),
+                    "validated":     True,
+                }
+                for a in validated
+            ]
+            db["annotations"].insert_many(ann_docs, ordered=False)
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "job_id": job_id,
         "total": len(annotations),
         "passed": len(validated),
         "rejected": rejected,
-        "validated_annotations": validated,
+        # validated_annotations intentionally omitted — cached internally for export_dataset
     }

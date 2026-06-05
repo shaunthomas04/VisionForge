@@ -3,12 +3,27 @@ import json
 import os
 import re
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
 from google.cloud import storage
 from google import genai
 from google.genai import types
+
+from .cache import _raw_annotations
+
+_mongo_db = None
+
+
+def _get_db():
+    global _mongo_db
+    if _mongo_db is None:
+        from pymongo import MongoClient
+        uri = os.environ.get("MONGODB_URI")
+        if not uri:
+            return None
+        _mongo_db = MongoClient(uri, serverSelectionTimeoutMS=4000)["visionforge"]
+    return _mongo_db
 
 
 def _annotation_prompt(width: int, height: int) -> str:
@@ -134,13 +149,11 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
             raw_bbox = None
         annotations.append({
             "annotation_id": str(uuid.uuid4()),
-            "job_id": job_id,
             "image_id": image_id,
             "gcs_uri": gcs_uri,
             "class_name": item["class_name"],
             "bbox": raw_bbox,
             "confidence": item.get("confidence", 0),
-            "description": item.get("description", ""),
         })
 
     if not annotations:
@@ -148,6 +161,8 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
             "status": "skipped",
             "job_id": job_id,
             "image_id": image_id,
+            "width": width,
+            "height": height,
             "annotations": [],
             "message": "No objects detected",
         }
@@ -156,6 +171,8 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
         "status": "ok",
         "job_id": job_id,
         "image_id": image_id,
+        "width": width,
+        "height": height,
         "annotations": annotations,
     }
 
@@ -172,18 +189,42 @@ def annotate_images(job_id: str, images: list) -> dict:
         A dict with all_annotations (flat list across all images),
         processed count, and skipped count.
     """
+    uri_by_id = {img["image_id"]: img["gcs_uri"] for img in images}
+
     def _one(img: dict) -> dict:
         return annotate_image(job_id, img["image_id"], img["gcs_uri"])
 
     all_annotations: list = []
+    image_docs: list = []
     skipped = 0
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         for result in executor.map(_one, images):
+            image_docs.append({
+                "image_id": result["image_id"],
+                "job_id": job_id,
+                "gcs_uri": uri_by_id.get(result["image_id"], ""),
+                "width": result.get("width", 0),
+                "height": result.get("height", 0),
+                "status": "annotated",
+            })
             if result["status"] == "ok":
                 all_annotations.extend(result["annotations"])
             else:
                 skipped += 1
+
+    # Store annotations in process-level cache so validate_annotations can read
+    # them without the agent having to pass the full list through the model context.
+    _raw_annotations[job_id] = all_annotations
+
+    # Write image records to MongoDB directly so the agent doesn't have to
+    # generate a large insert-many payload.
+    try:
+        db = _get_db()
+        if db is not None and image_docs:
+            db["images"].insert_many(image_docs, ordered=False)
+    except Exception:
+        pass
 
     return {
         "status": "ok",
@@ -191,5 +232,5 @@ def annotate_images(job_id: str, images: list) -> dict:
         "processed": len(images),
         "skipped": skipped,
         "annotation_count": len(all_annotations),
-        "all_annotations": all_annotations,
+        # all_annotations intentionally omitted — agent reads via job_id in next steps
     }
