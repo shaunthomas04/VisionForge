@@ -34,7 +34,8 @@ If MongoDB tools are available, call "insert-many" with:
 
 ## STEP 2 — ANNOTATE
 
-Call annotate_images(job_id, images) passing the full images list from Step 1.
+Call annotate_images(job_id, images, query=<the original search query string>)
+passing the full images list from Step 1.
 Annotations are cached internally — do NOT save or pass the annotations list.
 
 ## STEP 3 — VALIDATE

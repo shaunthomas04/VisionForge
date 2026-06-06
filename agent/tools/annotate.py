@@ -26,28 +26,30 @@ def _get_db():
     return _mongo_db
 
 
-def _annotation_prompt(width: int, height: int) -> str:
-    return f"""Analyze this image and identify ALL distinct object instances that could be useful in a computer vision dataset.
+def _annotation_prompt(width: int, height: int, subject: str) -> str:
+    return f"""You are annotating images for a computer vision dataset about "{subject}".
 
 The image is exactly {width}×{height} pixels. All bbox coordinates must use this pixel space:
   x ranges from 0 to {width}, y ranges from 0 to {height}.
 
+Find ALL clearly visible instances of "{subject}" in this image and draw a tight bounding box around each one.
+
 Return ONLY a JSON array — no explanation, no markdown:
 [
   {{
-    "class_name": "snake_case category name (e.g. gaming_mouse, coffee_cup)",
+    "class_name": "{subject}",
     "bbox": {{"x": left_pixel, "y": top_pixel, "w": width_pixels, "h": height_pixels}},
-    "confidence": <float 0.0-1.0>,
-    "description": "one sentence describing this specific instance"
+    "confidence": <float 0.0-1.0>
   }}
 ]
 
 Rules:
-- Include every clearly visible instance, even if multiple of the same class appear.
-- Each bbox must be tight around that specific instance.
+- class_name MUST always be exactly "{subject}" — never use sub-classes, parts, or variations (e.g. for "chess piece" do NOT write "knight" or "rook"; for "cat" do NOT write "cat paw").
+- Include every clearly visible instance, even if multiples appear in one image.
+- Each bbox must be tight around the full object instance.
 - x + w must not exceed {width}. y + h must not exceed {height}.
-- Only include objects with confidence >= 0.5.
-- If no clear objects are present, return an empty array: []"""
+- Only include instances with confidence >= 0.5.
+- If no instance of "{subject}" is present, return an empty array: []"""
 
 # Module-level singletons — created once to avoid async cleanup errors
 _gemini_client: genai.Client | None = None
@@ -72,18 +74,19 @@ def _get_gcs_client() -> storage.Client:
     return _gcs_client
 
 
-def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
-    """Send an image to Gemini Vision to detect all object instances with bounding boxes.
+def annotate_image(job_id: str, image_id: str, gcs_uri: str, query: str = "") -> dict:
+    """Send an image to Gemini Vision to detect object instances with bounding boxes.
 
     Args:
         job_id: The pipeline job this image belongs to.
         image_id: The MongoDB document ID for this image.
         gcs_uri: GCS URI of the image, e.g. gs://visionforge-raw/job_id/uuid.jpg.
+        query: The dataset subject (e.g. "chess piece"). Used to constrain class names
+            so Gemini only labels the target object, never sub-parts or variations.
 
     Returns:
         A dict with status and an annotations list. Each annotation has annotation_id,
-        class_name, bbox (x/y/w/h pixel coordinates), confidence, and description.
-        Multiple annotations are returned when multiple instances appear in the image.
+        class_name, bbox (x/y/w/h pixel coordinates), and confidence.
         Returns status 'skipped' with empty annotations list if no objects found.
     """
     model_name = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -110,7 +113,7 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
             model=model_name,
             contents=[
                 types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
-                _annotation_prompt(width, height),
+                _annotation_prompt(width, height, query or "object"),
             ],
         )
         text = response.text.strip()
@@ -177,22 +180,24 @@ def annotate_image(job_id: str, image_id: str, gcs_uri: str) -> dict:
     }
 
 
-def annotate_images(job_id: str, images: list) -> dict:
+def annotate_images(job_id: str, images: list, query: str = "") -> dict:
     """Annotate a batch of images in parallel using Gemini Vision.
 
     Args:
         job_id: The pipeline job this batch belongs to.
         images: List of image dicts from search_images, each containing
             image_id and gcs_uri.
+        query: The dataset subject (e.g. "chess piece"). Constrains Gemini to only
+            label the target object — no sub-classes or parts.
 
     Returns:
-        A dict with all_annotations (flat list across all images),
-        processed count, and skipped count.
+        A dict with processed count and skipped count. Annotations are cached
+        internally and read automatically by validate_annotations.
     """
     uri_by_id = {img["image_id"]: img["gcs_uri"] for img in images}
 
     def _one(img: dict) -> dict:
-        return annotate_image(job_id, img["image_id"], img["gcs_uri"])
+        return annotate_image(job_id, img["image_id"], img["gcs_uri"], query)
 
     all_annotations: list = []
     image_docs: list = []
