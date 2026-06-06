@@ -3,9 +3,6 @@
 <!-- Replace with your logo -->
 <img src="docs/logo.png" alt="VisionForge Logo" width="120" />
 
-<!-- Replace with hackathon badge/banner -->
-<img src="docs/hackathon-badge.png" alt="Google Cloud Rapid Agent Hackathon" width="340" />
-
 # VisionForge
 
 **AI agent that builds fully-labeled computer vision datasets from a plain-English request.**
