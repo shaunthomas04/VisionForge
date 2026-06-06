@@ -132,7 +132,7 @@ Open **two terminals**:
 **Terminal 1 — ADK backend (port 8000):**
 
 ```bash
-adk api_server . --allow_origins http://localhost:5173
+uvicorn server.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 **Terminal 2 — React frontend (port 5173):**

@@ -176,11 +176,29 @@ def export_dataset(
         formats = ["yolo", "coco"]
 
     annotations = _validated_annotations.get(job_id, [])
+
+    # Fallback: if cache is empty (e.g. server restarted mid-job), read from MongoDB
+    if not annotations:
+        try:
+            from pymongo import MongoClient
+            uri = os.environ.get("MONGODB_URI")
+            if uri:
+                db = MongoClient(uri, serverSelectionTimeoutMS=4000)["visionforge"]
+                docs = list(db["annotations"].find(
+                    {"job_id": job_id, "validated": True},
+                    {"_id": 0, "annotation_id": 1, "image_id": 1, "job_id": 1,
+                     "class_name": 1, "bbox": 1, "confidence": 1},
+                ))
+                if docs:
+                    annotations = docs
+        except Exception:
+            pass
+
     if not annotations:
         return {
             "status": "error",
             "job_id": job_id,
-            "message": "No validated annotations in cache. Ensure validate_annotations ran first.",
+            "message": "No validated annotations found in cache or MongoDB for this job.",
         }
 
     # Group annotations by image_id
@@ -224,7 +242,7 @@ def export_dataset(
             cn = ann.get("class_name", "object")
             class_counts[cn] = class_counts.get(cn, 0) + 1
 
-    class_names = sorted(class_counts.keys())
+    class_names = sorted(class_counts.keys()) or ["object"]
 
     # Split by IMAGE, not by annotation
     train_ids, val_ids, test_ids = _split(image_ids_sorted)
