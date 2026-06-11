@@ -4,8 +4,8 @@ VisionForge API server.
 Wraps ADK's FastAPI app and adds read-only MongoDB endpoints for the
 Datasets tab in the frontend.
 
-Usage:
-  uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+Usage (local dev):
+  uvicorn server.main:app --host 127.0.0.1 --port 8000 --reload
 """
 import os
 from fastapi import HTTPException
@@ -15,10 +15,14 @@ load_dotenv()
 
 from google.adk.cli.fast_api import get_fast_api_app
 
+# In dev: proxy from Vite (5173→8000), so we list 5173.
+# In production: everything is same-origin, but "*" avoids SSE CORS surprises.
+_cors_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+
 app = get_fast_api_app(
     agents_dir=".",
     web=False,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_cors_origins,
 )
 
 # ── Read-only MongoDB client for the Datasets UI ─────────────────────────────
@@ -302,3 +306,30 @@ async def download_export(job_id: str, fmt: str):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{slug}_{fmt}.zip"'},
     )
+
+
+# ── Serve the React SPA (production only) ────────────────────────────────────
+# In dev, Vite serves the frontend on port 5173 and proxies API calls to here.
+# In production (Cloud Run), the pre-built frontend/dist is bundled into the
+# container and served directly from this FastAPI app.
+
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+
+if _DIST.exists():
+    # Vite writes hashed assets under /assets/ — safe to serve as static dir
+    if (_DIST / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=str(_DIST / "assets")), name="vite-assets")
+
+    @app.get("/logo.png")
+    async def _logo_png():
+        return FileResponse(str(_DIST / "logo.png"))
+
+    # React Router catch-all: any unmatched path returns index.html so
+    # client-side routing (/, /datasets, /job/...) works on hard refresh.
+    @app.get("/{full_path:path}")
+    async def _spa_fallback(full_path: str):
+        return FileResponse(str(_DIST / "index.html"))

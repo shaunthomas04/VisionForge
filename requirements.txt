@@ -5,3 +5,4 @@ Pillow>=10.4.0
 requests>=2.32.0
 python-dotenv>=1.0.1
 pymongo>=4.0.0
+aiofiles>=24.0.0
