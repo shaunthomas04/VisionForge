@@ -7,12 +7,10 @@
 
 **AI agent that builds fully-labeled computer vision datasets from a plain-English request.**
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
 [![Google ADK](https://img.shields.io/badge/Google%20ADK-Agent%20Builder-4285F4)](https://google.github.io/adk-docs/)
 [![MongoDB Atlas](https://img.shields.io/badge/MongoDB-Atlas-00ED64)](https://www.mongodb.com/atlas)
 
-*Built for the **Google Cloud Rapid Agent Hackathon — MongoDB Track***
 
 </div>
 
@@ -214,7 +212,7 @@ visionforge/
 ├── main.py                 # FastAPI wrapper + dataset / image / search endpoints
 ├── requirements.txt
 ├── .env.example
-└── LICENSE                 # Apache 2.0
+└── LICENSE                 # MIT
 ```
 
 ---
@@ -233,6 +231,3 @@ visionforge/
 
 ---
 
-## License
-
-Apache 2.0 — see [LICENSE](LICENSE).
